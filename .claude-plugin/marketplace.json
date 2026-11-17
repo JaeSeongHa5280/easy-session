@@ -1,0 +1,15 @@
+{
+  "name": "easy-session",
+  "owner": {
+    "name": "JaeSeongHa5280"
+  },
+  "description": "easy-session — see the sessions that belong with this one, and message, pin, hand over or archive them from one panel.",
+  "plugins": [
+    {
+      "name": "easy-session",
+      "source": "./plugin",
+      "description": "Easy Session for the Claude desktop app (Code tab): see the sessions that belong with this one, and message, pin, hand over or archive them from one panel.",
+      "version": "0.1.26"
+    }
+  ]
+}

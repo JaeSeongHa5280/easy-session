@@ -1,0 +1,24 @@
+{
+  "name": "easy-session",
+  "version": "0.1.26",
+  "description": "Easy Session for the Claude desktop app (Code tab): see the sessions that belong with this one, and message, pin, hand over or archive them from one panel.",
+  "types": "./types/index.d.ts",
+  "author": {
+    "name": "JaeSeongHa5280"
+  },
+  "homepage": "https://github.com/JaeSeongHa5280/easy-session",
+  "repository": "https://github.com/JaeSeongHa5280/easy-session",
+  "license": "MIT",
+  "displayName": "Easy Session",
+  "keywords": [
+    "session",
+    "sessions",
+    "navigation",
+    "orchestration",
+    "handoff",
+    "mod"
+  ],
+  "documentationUrl": "https://github.com/JaeSeongHa5280/easy-session#readme",
+  "supportUrl": "https://github.com/JaeSeongHa5280/easy-session/issues",
+  "privacyPolicyUrl": "https://github.com/JaeSeongHa5280/easy-session/blob/main/plugin/README.md#what-it-sends"
+}
