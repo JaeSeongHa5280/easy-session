@@ -15,8 +15,14 @@
 <p align="center">
   <b>English</b> · <a href="README.ko.md">한국어</a>
   &nbsp;|&nbsp;
-  <a href="#requirements">Requirements</a> · <a href="#install">Install</a> · <a href="#update">Update</a> · <a href="#whats-new-in-0128">What's new</a> · <a href="#features">Features</a> · <a href="#good-to-know">Good to know</a> · <a href="#something-wrong--report-it">Report a problem</a>
+  <a href="#requirements">Requirements</a> · <a href="#install">Install</a> · <a href="#update">Update</a> · <a href="#whats-new-in-0128">What's new</a> · <a href="#why-easy-session">Why</a> · <a href="#features">Features</a> · <a href="#good-to-know">Good to know</a> · <a href="#something-wrong--report-it">Report a problem</a>
 </p>
+
+<p align="center">
+  <img src="docs/img/demo.gif" width="760" alt="Turning the advisor on and off and putting ultrathink in the prompt from the line above the input">
+</p>
+
+<p align="center"><b><a href="https://jaeseongha5280.github.io/easy-session/primer/">Interactive guide</a></b> — press through easy-session's screens and see each advantage</p>
 
 ---
 
@@ -108,15 +114,39 @@ No cloning into `~/.claude` and no `settings.json` edits are involved.
 
 0.1.27 wasn't published, so this covers both.
 
-- **VS Code and terminal** — the line above the input and the session panel now show in the Claude Code extension's chat panel in VS Code and in `claude` in a terminal. What only the desktop app can do is dimmed with the reason, or left out where there's little room. Remote Control and export run Claude Code's own `/remote-control` and `/export` there.
+- **VS Code and terminal** — the line above the input and the session panel now show in the Claude Code extension's chat panel in VS Code and in `claude` in a terminal. What only the desktop app can do is dimmed with the reason, or left out where there's little room. Remote Control and export run Claude Code's own `/remote-control` and `/export` there when the session has those commands (checked in a terminal, not yet in VS Code).
 - **A tidier session tools tab** — the tools for this session come first, nothing is open at first, and a tile opens as a card right under its row.
 - **Sessions outside the desktop app** — VS Code and terminal sessions open now show in the desktop app's panel with a tag, and you can send to them.
 - **Session rules** (on at first) — in a desktop app session, Claude asks you before sending to an ended or archived session, or to a third different session in one answer; in every session, Claude gets short rule lines with your messages.
 - **`ultrathink` in a new session's first message** — a setting, off at first.
 
+## Why easy-session
+
+easy-session lets you turn Claude Code features like the advisor and `ultrathink` on and off right from the line above the input, and shows when the advisor was called, what Claude did around it, and what it cost. Reports from sessions you opened wait until you choose to take them, instead of waking your session. As sessions add up, it keeps them in order with roles like main and orchestrator, and a session tree.
+
+| Without easy-session | With easy-session |
+|---|---|
+| Typing `/advisor` to turn it on, off or switch models | Turn the advisor on or off and pick its model on the line above the input — a small figure shows whether it applies to this session's model |
+| *"When did the advisor get called, and what did Claude do around it?"* | The 어드바이저 (advisor) tile lists each call: time, tokens, what Claude was doing just before and what it did right after |
+| Typing `ultrathink` and deleting it again | One press puts `ultrathink` in your prompt, another takes it out — think hard only on the turns you pick |
+| Not seeing what things cost | Costs in view: the advisor's count and cost on the line above the input (cost with easy-compact), both prices on a ❄ card before you send to a session that has gone cold, and what one request costs when you take a held report |
+| A report from a session you opened wakes yours for a turn, unasked | Hold reports in the panel and take them when you choose — fewer turns, fewer tokens. Settings → 새 자식 세션 (new child sessions) → 자식 보고 (child reports) → 사이드 패널에 모아 둠 (hold in the panel) |
+| *"Send this answer to main"* — one more turn | `>>main` (or `>>메인`) is easy-session's own command: end your message with it and the answer goes when the turn ends. ➤ sends just your text, without a turn |
+| Explaining every time which session splits the work and which does it | Roles — 메인 · 오케 · 서브 · 단독 (main · orchestrator · sub · solo) — with short rule lines that keep each to its job |
+| Opening sessions one by one to see what's going on | One panel: the session tree above, beside and below this one, and 지금 (now) — who waits for you, held reports, messages |
+| Writing a handover note by hand | 인계 (hand over): the next round takes over the place, the sessions below, the pin and the board (main and orchestrator sessions) |
+
+## Demo · 60 seconds
+
+https://github.com/user-attachments/assets/08a5c2f9-7b8e-4256-94d5-2ff06b7b7432
+
+To press through each step yourself, open the [interactive guide](https://jaeseongha5280.github.io/easy-session/primer/).
+
 ## Features
 
 ### 1. The line above the input
+
+<img src="docs/img/line.png" width="760" alt="The line above the input: 세션 패널 (session panel), pin, ultrathink, /btw, /fork, /rewind, /recap, 내보내기 (export), advisor, 전달 (forward) and 화면 (screen)">
 
 **One line above the chat input, in every session — desktop app, VS Code and terminal.** The **세션 패널** (session panel) button always comes first (in a terminal, after a dim 이지 세션) and opens or closes the panel. What else shows is up to you, in Settings → 입력창 위 줄에 둘 것 (*what to put on the line above the input*):
 
@@ -136,6 +166,10 @@ While Claude is answering, the advisor and 화면 choices are locked until the a
 **In VS Code and a terminal,** 고정 (pin) and 전달 (forward) aren't on the line — both need the desktop app. In VS Code, `ultrathink`'s rainbow letters use colors VS Code shows. In a terminal, reach the line with ctrl+x tab; its buttons are text, and the working line in the chat doesn't get `ultrathink · `. After opening the panel from the line, press shift+tab, ctrl+x tab, then Tab to reach its buttons.
 
 ### 2. Session tools tab
+
+<img src="docs/img/advisor.png" width="400" alt="The 어드바이저 (advisor) tile: each call's time and tokens, what Claude was doing just before and what it did right after"> <img src="docs/img/below.png" width="400" alt="The 하위 세션 (below) tile: held reports to accept or reject, ended and idle sessions, 모두 보관 (archive all)">
+
+<img src="docs/img/role.png" width="400" alt="The 역할 · 인계 (role · handover) card">
 
 **The panel's first tab, 세션 도구 (session tools), covers this session and the sessions around it.** From top to bottom:
 
@@ -179,6 +213,8 @@ How it goes depends on the permission modes:
 The send signal works between desktop app sessions. From a VS Code or terminal session, send from the session panel.
 
 ### 4. Settings tab
+
+<img src="docs/img/settings-child.png" width="520" alt="Settings → 새 자식 세션 (new child sessions), with 자식 보고 (child reports)">
 
 **The panel's second tab, 설정 (settings).** Each row has a **?** — hover for one line, press for more.
 
