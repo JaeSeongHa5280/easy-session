@@ -4,7 +4,7 @@
  */
 import type { EngineInterface } from 'claude-code'
 
-import type { AdvisorCall, CleanScan, EndedKid, Family, FamilyRow, HeldReport, PanelUi, PlanKind, SentRow, SentState, SessionMeta } from '../types'
+import type { AdvisorCall, CleanScan, EndedKid, Family, FamilyRow, HeldReport, OpenRow, PanelUi, PlanKind, SentRow, SentState, SessionMeta } from '../types'
 import { advisorCharSvg, advisorCharWidth } from './advisor-char'
 import type { AdvisorPose } from './advisor-char'
 import { agoText, heldKey, stampText, statusText, whenText } from './meta'
@@ -47,10 +47,57 @@ export const COMPOSE_AT = 'to:'
 /** 보낼 곳 줄 하나 — tag = 이 세션과의 관계(메인 · 연 세션 · 주인) */
 export type SendRow = { id: string; tag: string; title: string }
 
-/** 도구판 칸 열쇠(0.1.26 — 시안 5.1): 세션 메시지(위 세션 · 형제 세션 · 다른 세션) · 관리(하위 세션 · 진행판 · 역할 · 인계) · 도구(명령 · 어드바이저 · 현재 세션) */
+/** 도구판 칸 열쇠(0.1.26 — 시안 5.1 · 0.1.27 시안 6판 차례): 이 세션(명령 · 어드바이저 · 고정 · 보관) · 세션 메시지(위 세션 · 형제 세션 · 다른 세션) · 관리(하위 세션 · 진행판 · 역할 · 인계) */
 export type ToolKey = 'msg' | 'col' | 'inq' | 'rep' | 'brd' | 'role' | 'cmd' | 'adv' | 'mgr'
-/** 처음 편 칸 — 시안 5.1 처음 값(보는 세션을 바꾸면 「역할 · 인계」) */
-export const TOOL_START: ToolKey = 'role'
+/** 처음 편 칸 — 없음(0.1.27 시안 6판 ★ 「처음 펴 둘 칸 없음」: 아홉 칸만 보이고 칸 · 역할 칩을 누르면 그 줄 아래 카드로 편다). 노트 panel.md#toolBoard */
+export const TOOL_START: ToolKey | null = null
+/**
+ * 사용자 확정 전 추천 이름 둘(0.1.27 시안 6판 「맨 위 묶음 이름」 · 「셋째 칸 이름」 — ★ 없음): 바꾸려면 여기 한 곳만 고친다.
+ * selfGroup = 맨 위 묶음 머리 · mgr = 그 묶음 셋째 칸(열쇠 mgr — 옛 이름 「현재 세션」) · mgrSub = 그 칸 아랫줄. 노트 panel.md#toolBoard
+ */
+export const TOOL_NAMES = { selfGroup: '이 세션', mgr: '고정 · 보관', mgrSub: '정리 · 끝내기 · 원격', mgrOff: '정리 · 끝내기', mgrOffSub: '제목 정리 · 원격 …' } as const
+
+/**
+ * 표면마다 다른 꼴(0.1.28 — register 가 vscode.tsx 로 셈해 넘긴다, 처음 값 = 데스크톱): isApp = 데스크톱 앱 도구를 부를 수 있나(아니면 앱 몫 칸 · 줄을
+ * 넓은 자리는 흐리게 + 까닭, 좁은 칸은 뺀다) · isNarrow = 좁은 칸(VS Code 입력창 위 inline — 칸을 한 줄씩 접은 글 목록, 그림 없음) · hasSwitch = 켬 · 끔 스위치(Client)를 그리나(아니면 드롭다운) ·
+ * rainbowHex = ultrathink 무지개를 색 키 대신 hex 로(VS Code 는 무지개 키를 안 칠함) · textPress = 덮개 단추 대신 보이는 글을 단추로(VS Code — absolute 를 안 그림) ·
+ * fluid = 칸 폭을 칸 수 대신 남은 폭 나누기로(VS Code — 칸 셈이 둘) · isText = 글 화면(터미널 — 결정 4: 그림 · 덮개 · 드롭다운 · 스위치 없이,
+ * 칸은 글 단추 목록 · 고르기는 가로 단추). 노트 panel.md#PanelLook
+ */
+export type PanelLook = { isApp: boolean; isNarrow: boolean; hasSwitch: boolean; rainbowHex: boolean; textPress?: boolean; fluid?: boolean; isText?: boolean }
+export const DESKTOP_LOOK: PanelLook = { isApp: true, isNarrow: false, hasSwitch: true, rainbowHex: false }
+
+// 노트: panel.md#textPress — 덮개 단추(투명 단추 + 빈칸 U+2800 을 그림 · 글 위에 겹침)를 못 그리는 표면: 보이는 글이 단추(Button 자식은 글 · Text 만 — Svg 는 단추 밖)
+type TextPressUi = { textPress?: true; textUi?: true }
+const isTextPress = (ui: Ui): boolean => (ui as unknown as TextPressUi).textPress === true
+const withTextPress = (ui: Ui): Ui => ({ ...(ui as object), textPress: true }) as unknown as Ui
+/** 글 화면 표지가 붙은 부품 표인가(textUi 절) */
+const isTextUi = (ui: Ui): boolean => (ui as unknown as TextPressUi).textUi === true
+type PickProps = { key?: string; label?: string; value?: string; options: readonly { value: string; label?: string }[]; onSelect: (value: string) => void }
+// 노트: panel.md#textUi — 글 화면(터미널) 부품 표: 그림을 빼고(noSvg) 보이는 글이 단추(textPress), 드롭다운(Select)은 가로로 늘어선 고르기 단추
+// (고른 것 앞 ✓ · 단추 key = <드롭다운 key>-<값> — 이지 컴팩트 choiceControl 꼴). 엔진 h 는 함수 꼬리표를 그 props 로 부른다(엔진 타입 ElementConstructor)
+const withTextUi = (ui: Ui): Ui => {
+  const base = withTextPress(noSvg(ui))
+  const { Box, Button, Text } = base
+  const Select = (p: PickProps) => (
+    <Box key={p.key} columnGap={1} alignItems="center" flexWrap="wrap" minWidth={0}>
+      {p.label ? <Text color="subtle">{p.label}</Text> : null}
+      {p.options.map(o => (
+        <Button key={`${p.key}-${o.value}`} label={o.value === p.value ? `✓ ${o.label ?? o.value}` : (o.label ?? o.value)} onPress={() => p.onSelect(o.value)} />
+      ))}
+    </Box>
+  )
+  return { ...(base as object), Select, textUi: true } as unknown as Ui
+}
+/** 그린 원소의 꼴 이름(엔진 원소 { type, props }) — 아니면 null */
+const elType = (x: unknown): string | null => (typeof x === 'object' && x !== null && typeof (x as { type?: unknown }).type === 'string' ? (x as { type: string }).type : null)
+/** 원소 안 글만 이어 붙임(단추 이름이 필요할 때) */
+const plainOf = (x: unknown): string => {
+  if (typeof x === 'string' || typeof x === 'number') return String(x)
+  if (Array.isArray(x)) return x.map(plainOf).join('')
+  if (typeof x === 'object' && x !== null) return plainOf((x as { props?: { children?: unknown } }).props?.children)
+  return ''
+}
 
 /** 고르기 하나(드롭다운 값 · 목록) */
 export type Choice = { value: string; options: readonly { value: string; label: string }[] }
@@ -60,6 +107,11 @@ export type OwnerPick = { value: string; choices: readonly string[]; current: st
 
 export type PanelView = {
   selfId: string
+  /** 데스크톱 앱 도구를 부를 수 있나(0.1.28 — register.md#canUseApp) — 꼴 값 PanelLook.isApp 의 재료. 없으면 됨 */
+  isApp?: boolean
+  /** 「다른 세션」 칸 지금 열린 세션(0.1.28 — register.md#openLists): openDesk = 데스크톱 세션(엔진 세션 패널만 · 나무 차례) · openOut = 데스크톱 앱 밖 세션(VS Code · 터미널) */
+  openDesk: readonly OpenRow[]
+  openOut: readonly OpenRow[]
   now: number
   metas: ReadonlyMap<string, SessionMeta>
   /** 식은 세션의 컨텍스트(천 토큰) — 그 세션이 턴 끝에 적은 값만(없으면 값을 안 보인다) */
@@ -69,14 +121,22 @@ export type PanelView = {
   /** 이 세션 역할(0.1.26 — 관계 줄 역할 칩, meta.md#roleOf) · 메인 세션 제목(메인이 있고 이 세션이 아닐 때 — 「역할 · 인계」 메인 줄 까닭) */
   role: SessionRole
   mainTitle: string | null
-  /** 위 세션(패널 나무 위 · 살아 있음) — 없으면 null. tag = 연 세션(앱에서 연 세션) · 주인(사람이 정했거나 인계로 넘어옴) */
+  /** 위 세션(패널 나무 위 · 살아 있음) — 없으면 null. tag = 앞 차수(이 세션이 인계받은 세션 — 나무 ②) · 연 세션(앱에서 연 세션) · 주인(사람이 정했거나 인계로 넘어옴) */
   up: SendRow | null
+  /** 이 세션을 인계받은 뒤 차수가 이 세션 아래에 있을 때(나무 ② — 둘 다 살아 있고 앱 자식) 그 id — 하위 줄 「뒤 차수」 표지. 없으면 null */
+  heir: string | null
   /** 메인(`>>메인` 과 같은 셈 — 노트 panel.md#compose) — 이 세션 · 위 세션이면 null(「다른 세션」 칸 보낼 곳) */
   mainRow: SendRow | null
   /** 이 세션이 앱에서 연 세션(앱 부모 = 이 세션) — 하위 줄 「붙임」 가름(그 밖 하위는 이지세션 기록으로 붙인 세션) */
   opened: ReadonlySet<string>
   /** 이 세션이 보낸 글 최근 것(앱 도착 기록) — 칸마다 받는 세션으로 가른다 */
   sent: readonly SentRow[]
+  /**
+   * 칸 아랫줄 「보낸 N · 받은 N」 재료(0.1.27 — 시안 6판 6): sentN = 받는 세션마다 이 세션이 보낸 글 수(이 세션 앱 메타 peerReceipts 전부),
+   * recv = 보낸 세션마다 이 세션이 받은 글 수(다른 세션들의 peerReceipts 가운데 받는 곳이 이 세션인 것). 노트 panel.md#toolBoard
+   */
+  sentN: ReadonlyMap<string, number>
+  recv: ReadonlyMap<string, number>
   /** 이 세션 컨텍스트 차지 %(역할 · 인계 칸 한 줄) — 모르면 null */
   ctxPct: number | null
   /** 이 세션 권한 모드가 bypass 인가(그릴 때 값 — 누를 때는 register 가 다시 본다) */
@@ -96,7 +156,7 @@ export type PanelView = {
   /** 들이기 후보(오케만) — 이 묶음 밖의 살아 있는 세션 */
   adopt: readonly FamilyRow[]
   /** [설정] 쪽 — 입력창 위 줄에 둘 것 · 화면 · advisor · 새 자식 세션 저절로 고정 · 저절로 떼어 내기 · 자식 보고. isWorking 이면 advisor 고르기를 막는다 */
-  settings: { quick: ReadonlySet<QuickItem>; display: Choice; advisor: Choice; isWorking: boolean; autoPin: boolean; autoDetach: boolean; autoUnpin: boolean; autoGroup: boolean; reports: Choice; peerRel: boolean }
+  settings: { quick: ReadonlySet<QuickItem>; display: Choice; advisor: Choice; isWorking: boolean; autoPin: boolean; autoDetach: boolean; autoUnpin: boolean; autoGroup: boolean; firstUltra: boolean; reports: Choice; peerRel: boolean; sessionRules: boolean }
   /** 「이 세션」 쪽 — 이 세션 줄(상태 · 끝남), 형제 세션, 자식 */
   selfRow: FamilyRow | null
   siblings: readonly FamilyRow[]
@@ -119,8 +179,10 @@ export type PanelView = {
 export type PanelActs = {
   /** 보는 쪽 고르기 — 「이 세션」을 고르면 이 세션 원격이 켜졌나 본다 */
   view: (to: PanelUi['view']) => void
-  /** 도구판 칸 고르기(0.1.26) — 편 칸 하나만, 바꾸면 줄 손질 · 보낼 칸 · 묻는 글을 닫는다. 어드바이저 칸이면 기록을 바로 읽는다 */
+  /** 도구판 칸 펴고 접기(0.1.27 — 펼친 칸을 다시 누르면 접힘) — 편 칸 하나만, 바꾸거나 접으면 줄 손질 · 보낼 칸 · 묻는 글을 닫는다. 펼 때 어드바이저 칸이면 기록을 바로 읽는다 */
   tool: (k: ToolKey) => void
+  /** 칸 펴기만(0.1.27 — 「지금」 줄 [보기]): 이미 펴져 있으면 그대로 */
+  openTool: (k: ToolKey) => void
   go: (id: string) => void
   /** ⋯ 메뉴 열고 닫기 — 열 때 그 세션 원격이 켜졌나 본다 */
   more: (id: string) => void
@@ -167,8 +229,12 @@ export type PanelActs = {
   /** 끝나면 고정 풀기 · 사이드바 그룹으로(0.1.6) */
   pickAutoUnpin: (on: boolean) => void
   pickAutoGroup: (on: boolean) => void
+  /** 새 세션 첫 글에 ultrathink(0.1.27) — 노트 register.md#firstUltra */
+  pickFirstUltra: (on: boolean) => void
   /** 보낸 세션 관계 알리기(0.1.20) — 노트 panel.md#peerRelSet */
   pickPeerRel: (on: boolean) => void
+  /** 세션 규칙(0.1.27 — 보내기 확인 · 차례 줄 · 말로 하기 힌트) — 노트 register.md#sendRules */
+  pickSessionRules: (on: boolean) => void
   /** 정리 — 이 세션이면 입력칸에 정리 글, 다른 세션이면 보낼 칸을 정리 글로 채워 연다 */
   clean: (id: string) => Promise<void>
   /** 끝난 하위 모두 보관 — bypass 만 한 번에(화면에 열린 세션 건너뜀 · 고정 풀고 보관 · 알림 한 줄), auto 면 줄마다(0.1.26 — register.md#archiveAll) */
@@ -325,8 +391,6 @@ function nest(rows: readonly FamilyRow[]): Node[] {
 const TRI_W = 5
 /** 자식 줄을 들이는 폭(칸) — 부모 칩 자리만큼 */
 const INDENT = TRI_W
-/** 「위 세션」 · 「다른 세션」 보낼 곳 줄 머리 폭(칸) — 「연 세션」이 드는 값 */
-const SEND_TAG_W = 7
 /** 「세션 도구」 쪽 목록(형제 세션 · 하위 세션 · 밑으로 붙이기 · 진행판 새 줄) 상한 */
 const LIST_LIMIT = 10
 // 노트: panel.md#heldCards — 그리는 메시지 상한(0.1.5 ★ — 0.1.4 까지 10). 보낸 세션마다 카드라 메시지 하나가 칸 하나만큼 커서,
@@ -334,13 +398,25 @@ const LIST_LIMIT = 10
 const MSG_LIMIT = 8
 /** 카드 바탕(0.1.5 — 어두운 테마 흰 5% · 밝은 테마 검정 3% 어림). 맞는 테마 키가 없어 중성 회색 — 노트 panel.md#card */
 const CARD_BG = 'rgba(128,128,128,.08)'
-// 노트: panel.md#toolBoard — 도구판(0.1.26): 묶음 머리 셋(정본 9절 「도구판 꼴 정함 2」 이름 그대로) · 칸 사이 1칸 · 칸 최소 폭 · 하위 줄 제목 칸 최소 폭(시안 140px ≈ 18칸) ·
-// 「지금」 줄에 그리는 입력 필요 줄 상한
+// 노트: panel.md#toolBoard — 도구판(0.1.27 시안 6판): 묶음 차례 「이 세션」 → 「세션 메시지」 → 「관리」(자주 쓸 셋을 맨 위로 — 명령 · 어드바이저 · 고정 · 보관) · 칸 사이 1칸 ·
+// 칸 최소 폭 · 하위 줄 제목 칸 최소 폭(시안 140px ≈ 18칸) · 「지금」 줄에 그리는 입력 필요 줄 상한
 const TOOL_GROUPS: readonly (readonly [Tool['g'], string])[] = [
+  ['tool', TOOL_NAMES.selfGroup],
   ['msg', '세션 메시지'],
   ['mgmt', '관리'],
-  ['tool', '도구'],
 ]
+// 노트: panel.md#toolBoard — 간격(0.1.27 시안 6판 px → 엔진 단위 · 1줄 20px · 1칸 7.71px): 묶음 사이 24px · 머리 → 칸 6px · 칸 안 위아래 10px ·
+// 펼친 카드 위 8px · 카드 안 여백 위 4 · 아래 6 · 옆 8px(0.1.26 은 10 · 5 · 7px — 진단 12 S1 · S2 「딱딱 붙어 있음」)
+const GROUP_GAP = 1.2
+const HEAD_GAP = 0.3
+const TILE_PAD_Y = 0.5
+// 칸 안 옆 여백(칸) — 0.1.26 은 0.75(시안 6px). 0.1.27 꺾쇠가 이름 자리를 줄여 0.5(약 4px)로 — 368px 그림 도구로 잼(노트 panel.md#toolBoard)
+const TILE_PAD_X = 0.5
+const CARD_TOP = 0.4
+// 노트: panel.md#toolCard — 카드 줄(시안 .cr): 이름표 칸 폭(칸) = 가장 긴 이름표(「받는 법」 · 「보낸 글」 — 작은 글 약 5.6칸) + 사이 + ? 그림(16px)(7.5 면 368 · 380 에서 「받는 / 법」으로 꺾였다 — 그림 도구) ·
+// 줄 최소 높이(36px = 단추 28 + 위아래 4)
+const LABEL_W = 8.5
+const ROW_MIN_H = 1.8
 const TILE_GAP = 1
 const TILE_MIN = 10
 const KID_TITLE_MIN = 18
@@ -348,6 +424,14 @@ const NOW_WAIT_MAX = 3
 // 노트: panel.md#toolBoard — 수 표를 칸 모서리 밖으로 미는 여백(줄 · 칸 — 그림 도구로 맞춤)
 const CNT_SHIFT_Y = -0.75
 const CNT_SHIFT_X = -0.9
+// 노트: panel.md#toolBoard — 폭을 나눠 채우는 표면(fluid)의 칸 최소 폭 셈(그 표면 1칸 7.01px — 11-19 실물 잼): 글은 넓은 글자(한글 · 한자) 1.9 · 빈칸과 점 · 꺾쇠 0.65 ·
+// 그 밖 0.95칸, 최소 폭은 칸 안(content-box — 안 여백 · 테는 밖) = 그림 16px + 사이 0.35 + 단추(글 + 안 여백과 테 약 18px)
+const isWideCh = (c: number): boolean => (c >= 0x1100 && c <= 0x11ff) || (c >= 0x2e80 && c <= 0xa4cf) || (c >= 0xac00 && c <= 0xd7a3) || (c >= 0xf900 && c <= 0xfaff) || (c >= 0xff00 && c <= 0xff60)
+const fluidCh = (text: string): number => [...text].reduce((n, c) => n + (/[\s·›˅.,:;'"()|/-]/.test(c) ? 0.65 : isWideCh(c.codePointAt(0)!) ? 1.9 : 0.95), 0)
+const FLUID_TILE_CH = 16 / 7.01 + 0.35
+const FLUID_BUTTON_CH = 18 / 7.01
+// 칸 사이 줄(꺾였을 때 — 줄)
+const FLUID_ROW_GAP = 0.35
 // 노트: panel.md#kidRow — 「오래 쉼」 문턱(일): ★ 7일(정본 9절 「시안 5.1 확정」 ② — 시안엔 추천 없음, 앱 「Archive inactive sessions」 고르기 값 1 · 2 · 7 · 14 · 30일의 가운데)
 export const IDLE_DAYS = 7
 const DAY_MS = 24 * 3_600_000
@@ -355,8 +439,21 @@ const DAY_MS = 24 * 3_600_000
 const NOW_ORCHE_NO = 'now-orche-no'
 // 노트: panel.md#advisorFold — 어드바이저 줄 이름표 최소 폭(칸) — 긴 쪽 「하던 일」이 드는 값
 const ADV_LABEL_W = Math.ceil(textCh('하던 일'))
-/** 도구판 칸 하나 — g = 묶음, sub = 흐린 한 줄, use = 이 역할 · 관계에서 쓰는가(아니면 흐림), cnt = 사람이 할 것 수(수 표), body = 편 칸 안 */
-type Tool = { k: ToolKey; g: 'msg' | 'mgmt' | 'tool'; name: string; icon: (dim: boolean) => unknown; sub: string; use: boolean; cnt: number; body: () => unknown[] }
+/** 도구판 칸 하나 — g = 묶음, sub = 흐린 한 줄, use = 이 역할 · 관계에서 쓰는가(아니면 흐림), cnt = 사람이 할 것 수(수 표), body = 펼친 카드 안(덩이마다 — 덩이 사이 가는 선),
+ * appOnly = 데스크톱 앱에서만 되는 칸인데 이 세션은 앱 도구를 못 부름(0.1.28 — 넓은 자리는 흐리고 안 눌림, 좁은 칸은 뺌) */
+type Tool = { k: ToolKey; g: 'msg' | 'mgmt' | 'tool'; name: string; icon: (dim: boolean) => unknown; sub: string; use: boolean; cnt: number; body: () => unknown[][]; appOnly?: boolean }
+
+// 노트: panel.md#appOnly — 데스크톱 앱에서만 되는 칸 · 줄의 글(0.1.28 결정 1 — 시안 「★ 모두 적용」 그림 글): 칸 아랫줄 · 도구판 아래 까닭 한 줄 · 「정리 · 끝내기」 칸 안 줄 · [설정] 묶음 줄
+const APP_ONLY = '데스크톱 앱에서만'
+const APP_ONLY_WHY = '흐린 칸 — 데스크톱 앱 밖에서 연 세션이라 위 · 형제 · 하위 세션이 없습니다'
+const APP_ONLY_MGR = '고정 · 보관 · 떼어 내기'
+const APP_ONLY_SET = '데스크톱 앱에서만 — 여기서 바꿔도 데스크톱 세션에 적용됩니다'
+// 노트: panel.md#openRows — 「다른 세션」 칸 지금 열린 세션 묶음 이름(0.1.28 — 시안 「다른 세션 ⌄」 그림 글)
+const OPEN_DESK = '데스크톱'
+const OPEN_OUT_HEAD = '데스크톱 앱 밖 · 지금 열린 세션'
+
+/** 그림(Svg)을 뺀 부품 표 — 좁은 칸은 글만(0.1.28 결정 3, 노트 panel.md#narrowView). mark · iconButton · paneButton · rowChip 이 글로 물러선다 */
+const noSvg = (ui: Ui): Ui => ({ ...(ui as object), Svg: undefined }) as unknown as Ui
 
 /** 칸 머리 ? — 마우스 올림 한 줄(tip) · 누르면 아래 펼치는 글(lines) */
 type Help = { tip: string; lines: readonly string[] }
@@ -382,21 +479,35 @@ const PV_HELP: Help = {
   lines: ['지금 [설정] 값으로 입력창 위 줄이 어떻게 보이는지입니다. 스위치 · 값을 바꾸면 바로 바뀝니다. 미리보기 안 단추는 눌러도 아무 일도 안 합니다.'],
 }
 // 노트: panel.md#settings — [설정] 줄 풀이(0.1.25 — 줄 아래 흐린 설명을 ? 로): tip = 마우스 올림 한 줄 · lines = 누르면 줄 아래
-const SET_HELP: Record<'display' | 'advisor' | 'autoPin' | 'autoUnpin' | 'autoGroup' | 'autoDetach' | 'reports' | 'peerRel', Help> = {
+const SET_HELP: Record<'display' | 'advisor' | 'autoPin' | 'autoUnpin' | 'autoGroup' | 'autoDetach' | 'firstUltra' | 'reports' | 'peerRel' | 'sessionRules', Help> = {
   display: { tip: '모든 세션의 Claude 답을 고른 기기에 맞춥니다', lines: ['모든 세션의 Claude 답을 고른 기기에 맞춥니다. 입력창 위 줄 「화면」과 같은 값입니다.'] },
   advisor: { tip: '모든 세션에 걸립니다 · 입력창 위 줄과 같은 값', lines: ['모든 세션에 걸리는 설정입니다. 입력창 위 줄과 같은 값입니다.'] },
   autoPin: { tip: '세션이 자식 세션을 열면 사이드바에 고정합니다', lines: ['세션이 자식 세션을 열면 사이드바에 고정합니다.'] },
   autoUnpin: { tip: '진행판에 끝 줄이 적히면 저절로 붙인 고정을 풉니다', lines: ['진행판에 끝 줄이 적히면 저절로 붙인 고정을 풉니다.'] },
   autoGroup: { tip: '주인 세션과 자식 세션을 사이드바에서 한 그룹으로 묶습니다', lines: ['주인 세션과 자식 세션을 사이드바에서 한 그룹으로 묶습니다.'] },
   autoDetach: { tip: '자식 세션을 열자마자 떼어 냅니다(bypass 세션만)', lines: ['켜면 자식 세션을 열자마자 떼어 냅니다. 그 세션 보고는 안 오고, 물음 · 끝은 진행판에 적습니다(bypass 세션만).'] },
+  // 노트: register.md#firstUltra — 0.1.27 명세 2절 예시 글 그대로
+  firstUltra: { tip: '이 세션이 새 세션을 열 때 첫 글 맨 앞에 ultrathink 를 넣습니다', lines: ['이 세션이 새 세션을 열 때 첫 글 맨 앞에 ultrathink 를 넣습니다.', '하던 일을 새 세션으로 넘길 때도 넘기는 글 맨 앞에 넣습니다.'] },
   reports: { tip: '연 세션의 보고를 막아 「하위 세션」 칸에 모아 둡니다', lines: ['연 세션이 답을 끝내며 보내는 보고를 막아 [세션 도구] 「하위 세션」 칸에 모아 둡니다. 「앱 그대로」면 연 세션이 받아 차례가 돕니다.'] },
   peerRel: { tip: '보낸 세션이 어디인지 Claude 에게만 알립니다', lines: ['다른 세션 글을 받으면 보낸 세션이 위 · 아래 · 같은 나무 · 다른 나무 중 어디인지 Claude 에게만 알립니다.'] },
+  // 노트: register.md#sendRules — 세션 규칙(0.1.27 — 이름은 임시 · 확정은 사용자, 처음 값 켬)
+  sessionRules: {
+    tip: '다른 세션에 보내기 전에 규칙을 확인하고, 글을 보낼 때마다 Claude 에게 규칙을 알려 줍니다',
+    lines: [
+      '끝났거나 보관된 세션에 보내기와, 한 번 대답하는 동안 세 번째 다른 세션에 보내기를 막고 Claude 가 먼저 사용자에게 묻게 합니다. 사용자가 답한 뒤의 같은 보내기는 통과합니다.',
+      '사용자가 글을 보낼 때마다 Claude 에게만 규칙 안내(이어받은 세션의 첫 대답 · 조율하는 세션이 할 일 · 지시는 한 단계 아래로)와 말로 인계 · 열기 · 위로 보내기 안내를 붙입니다. 모든 세션에 걸립니다.',
+    ],
+  },
 }
 
 /** [설정] 새 자식 세션 스위치 key — 누름은 register.tsx ui.message 로 온다(입력창 위 줄 아홉과 같은 앞머리, 칸 이름과 안 겹치게) */
-export const AUTO_SWITCH = { pin: `${QUICK_SWITCH}auto-pin`, detach: `${QUICK_SWITCH}auto-detach`, unpin: `${QUICK_SWITCH}auto-unpin`, group: `${QUICK_SWITCH}auto-group` } as const
+export const AUTO_SWITCH = { pin: `${QUICK_SWITCH}auto-pin`, detach: `${QUICK_SWITCH}auto-detach`, unpin: `${QUICK_SWITCH}auto-unpin`, group: `${QUICK_SWITCH}auto-group`, ultra: `${QUICK_SWITCH}first-ultra` } as const
 /** [설정] 「보낸 세션 관계 알리기」 스위치 key(0.1.20) — 누름은 register.tsx ui.message 로 온다 */
 export const PEER_SWITCH = `${QUICK_SWITCH}peer-rel`
+/** [설정] 「세션 규칙(보내기 확인 · 차례 줄)」 스위치 key(0.1.27) — 누름은 register.tsx ui.message 로 온다. 노트 register.md#sendRules */
+export const RULES_SWITCH = `${QUICK_SWITCH}session-rules`
+/** 세션 규칙 스위치 이름 — 임시(0.1.27 명세: 확정은 사용자 · 2차가 이름 짝과 같이 여쭘) */
+export const RULES_NAME = '세션 규칙(보내기 확인 · Claude 안내)'
 
 /** 「20:08」 — 하루가 넘으면 앞에 달 · 날(whenText 의 앞쪽) */
 const clockText = (at: number, now: number) => whenText(at, now).split(' · ')[0]!
@@ -426,7 +537,12 @@ export function afterLine(c: Pick<AdvisorCall, 'tools' | 'after'>): string {
 }
 
 // 노트: panel.md#drawPanel
-export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts: PanelActs) {
+export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts: PanelActs, look: PanelLook = DESKTOP_LOOK) {
+  // 노트: panel.md#narrowView — 좁은 칸은 글만(그림을 뺀 부품 표로 그린다)
+  if (look.isNarrow) ui = noSvg(ui)
+  // 노트: panel.md#textUi — 글 화면(터미널)은 그림 · 덮개 · 드롭다운 · 스위치 없이 / panel.md#textPress — 덮개 단추를 못 그리는 표면은 보이는 글이 단추
+  if (look.isText) ui = withTextUi(ui)
+  else if (look.textPress) ui = withTextPress(ui)
   const { Box, Text, Button, Select } = ui
   const InputEl = (ui as unknown as { Input?: (p: Record<string, unknown>) => unknown }).Input
   const self = v.metas.get(v.selfId)
@@ -535,7 +651,7 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
   }
 
   const sentList = (key: string, list: readonly SentRow[]) => (
-    <Box key={key} flexDirection="column" marginTop={0.3}>
+    <Box key={key} flexDirection="column" flexGrow={1} minWidth={0}>
       {list.length === 0 ? (
         <Text color="subtle">보낸 글 없음</Text>
       ) : (
@@ -630,12 +746,13 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
   const rowMark = (r: FamilyRow) => roleMark(ui, r.isOrche ? 'orche' : 'sub')
 
   // 노트: panel.md#sibRow — 형제 줄(0.1.26 — 시안 5.1 「형제 줄 [보내기] · [가기]만」): 역할 그림 · 제목 · [보내기] · [가기], 아래 상태 · 때 · ❄ 깨우는 값(설치판 줄 둘째 줄 그대로).
-  // ⋯ 메뉴는 없다(설치판의 고정 · 글 보기 · 내보내기 · 오케 · 주인 고르기는 형제에겐 안 씀). 단추 key 는 옛 ⋯ 목록 이름(es-m-send · es-m-go)
+  // ⋯ 메뉴는 없다(설치판의 고정 · 글 보기 · 내보내기 · 오케 · 주인 고르기는 형제에겐 안 씀). 단추 key 는 옛 ⋯ 목록 이름(es-m-send · es-m-go).
+  // 0.1.27(시안 6판 3): [가기]는 채운 단추(글 단추는 글로 보였다 — 진단 13 T2) · 줄 위 여백은 카드 줄 꼴(위아래 0.2)
   const sibRow = (r: FamilyRow) => {
     const el = k(r.id)
     const isLive = !r.isEnded && !r.isArchived
     return (
-      <Box key={`es-row-${el}`} flexDirection="column" marginTop={0.5} minWidth={0}>
+      <Box key={`es-row-${el}`} flexDirection="column" paddingY={0.2} minWidth={0}>
         <Box key={`es-head-${el}`} columnGap={0.5} alignItems="center" minWidth={0}>
           {rowMark(r)}
           {r.isStarred ? pinMark(ui, r.pinWhy) : null}
@@ -646,7 +763,7 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
           </Box>
           <Box columnGap={0.5} alignItems="center" flexShrink={0}>
             {isLive ? <Button key={`es-m-send-${el}`} variant="secondary" label={pu.sending === r.id ? '닫기' : '보내기'} onPress={() => acts.send(r.id)} /> : null}
-            <Button key={`es-m-go-${el}`} plain label="가기" onPress={() => acts.go(r.id)} />
+            <Button key={`es-m-go-${el}`} variant="secondary" label="가기" onPress={() => acts.go(r.id)} />
           </Box>
         </Box>
         {metaLine(r)}
@@ -656,7 +773,7 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
     )
   }
 
-  // 노트: panel.md#kidRow — 하위 줄(0.1.26 — 시안 5.1): 역할 그림 · 제목 · 표지(상태 · 붙임) · [받기 N] · [보관](끝남 · 메인 · 오케) · [가기] · ⋯(메인 · 오케 — 손질).
+  // 노트: panel.md#kidRow — 하위 줄(0.1.26 — 시안 5.1): 역할 그림 · 제목 · 표지(상태 · 뒤 차수 · 붙임) · [받기 N] · [보관](끝남 · 메인 · 오케) · [가기] · ⋯(메인 · 오케 — 손질).
   // 제목 칸 최소 폭을 두고 줄을 꺾어, 좁으면 표지 · 단추 덩이가 둘째 줄 오른쪽으로 간다. 붙인 줄(앱 부모가 이 세션이 아님)은 아래 흐린 한 줄.
   // ⋯ 를 펴면 손질 줄 + 그 세션 모인 보고(줄마다 수락 · 거절 · 본문 — 설치판 할 일 카드 몫을 잃지 않게)
   const kidRow = (r: FamilyRow) => {
@@ -688,7 +805,7 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
       <Button key={`es-more-${el}`} plain dimColor label="⋯" onPress={() => acts.more(r.id)} />
     )
     return (
-      <Box key={`es-row-${el}`} flexDirection="column" marginTop={0.5} minWidth={0}>
+      <Box key={`es-row-${el}`} flexDirection="column" paddingY={0.2} minWidth={0}>
         <Box key={`es-head-${el}`} columnGap={0.5} rowGap={0.3} alignItems="center" flexWrap="wrap" minWidth={0}>
           <Box columnGap={0.5} alignItems="center" flexGrow={100} flexShrink={1} minWidth={Math.min(KID_TITLE_MIN, cols - 4)}>
             {rowMark(r)}
@@ -702,10 +819,11 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
           <Box columnGap={0.5} alignItems="center" flexGrow={1} justifyContent="flex-end">
             {state}
             {idle}
+            {v.heir === r.id ? tagBox(`es-kheir-${el}`, '다음 차수') : null}
             {notOpened ? tagBox(`es-kat-${el}`, how) : null}
-            {mine.length > 0 ? <Button key={`es-take-${el}`} variant="secondary" label={`받기 ${mine.length}`} onPress={() => acts.accept(mine.map(heldKey))} /> : null}
+            {mine.length > 0 ? <Button key={`es-take-${el}`} variant="secondary" label={`수락 ${mine.length}`} onPress={() => acts.accept(mine.map(heldKey))} /> : null}
             {r.isEnded && canFix ? <Button key={`es-end-arch-${el}`} variant="secondary" label="보관" onPress={() => void acts.archive(r.id, true)} /> : null}
-            <Button key={`es-m-go-${el}`} plain label="가기" onPress={() => acts.go(r.id)} />
+            <Button key={`es-m-go-${el}`} variant="secondary" label="가기" onPress={() => acts.go(r.id)} />
             {hasMore ? more : null}
           </Box>
         </Box>
@@ -718,14 +836,14 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
         {notOpened ? (
           <Box key={`es-katl-${el}`} marginLeft={2.5} minWidth={0}>
             <Text color="subtle" size="footnote">
-              {r.isDetached ? '떼어 내서 앱 보고는 안 옴 — 보고는 진행판 끝 줄로' : '보고는 진행판 끝 줄로 — 앱이 연 세션이 아니라 받기는 없음'}
+              {r.isDetached ? '떼어 내서 앱 보고는 안 옴 — 보고는 진행판 끝 줄로' : '앱이 열지 않은 세션이라 앱 보고는 안 옴 — 보고는 진행판 끝 줄로'}
             </Text>
           </Box>
         ) : null}
         {isOpen && canFix ? kidFix(r) : null}
         {isOpen && mine.length > 0 ? heldList(el, mine) : null}
         {isOpen && sentTo.length > 0 ? (
-          <Box key={`es-kid-sent-${el}`} flexDirection="column" marginLeft={2.5} minWidth={0}>
+          <Box key={`es-kid-sent-${el}`} flexDirection="column" marginLeft={2.5} marginTop={0.3} minWidth={0}>
             {sentList(`es-msgs-${el}`, sentTo)}
           </Box>
         ) : null}
@@ -760,14 +878,73 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
 
   // 노트: panel.md#card — 카드 = 바탕(CARD_BG) + 테두리 20%(promptBorder) 둥근 칸. 테두리 대비가 낮아(1.89) 칸은 바탕 · 머리 그림 · 굵은 머리 글로 가른다.
   // isList = 세션 줄 목록(줄마다 위 여백이 있어 카드 위 안 여백을 뺀다)
-  const card = (key: string, children: unknown[], isList = false) => (
-    <Box key={key} flexDirection="column" backgroundColor={CARD_BG} borderStyle="round" borderColor="promptBorder" paddingX={0.75} paddingY={0.4} {...(isList ? { paddingTop: 0 } : {})} marginTop={0.5}>
-      {children}
-    </Box>
-  )
+  // 노트: panel.md#textUi — 글 화면은 테두리 · 바탕 없이 2칸 들임(테두리 칸이 위아래 두 줄 · 옆 네 칸을 먹음 — 시안 터미널 그림)
+  const card = (key: string, children: unknown[], isList = false) =>
+    look.isText ? (
+      <Box key={key} flexDirection="column" marginLeft={2}>
+        {children as never}
+      </Box>
+    ) : (
+      <Box key={key} flexDirection="column" backgroundColor={CARD_BG} borderStyle="round" borderColor="promptBorder" paddingX={0.75} paddingY={0.4} {...(isList ? { paddingTop: 0 } : {})} marginTop={0.5}>
+        {children}
+      </Box>
+    )
 
   // 노트: panel.md#card — 카드 안 줄 사이 가는 선
   const rline = (key: string) => <Box key={key} height={0.06} marginY={0.3} backgroundColor="promptBorder" />
+
+  // 노트: panel.md#toolCard — 도구판 펼친 카드 안 꼴(0.1.27 시안 6판 3 · 진단 13 T2 「기능으로 안 읽힘」): 줄마다 「이름표 + 단추」, 풀이 글은 ? 뒤로.
+  // ? 는 [설정] setRow 와 같은 부품(pressBox · 마우스 올림 한 줄 · 누르면 줄 아래 풀이) — 이름표가 있는 줄은 이름표 바로 옆, 이름표 없는 줄(세션 줄 · 칩)은 줄 끝.
+  // 열쇠 = 접힘 help:<칸>:<줄>(크기 안전망이 비우는 무거운 접힘 help: 와 같은 앞머리), 단추 key = es-help-<칸>-<줄>
+  type RowHelp = { id: string; help: Help }
+  const helpKey = (id: string) => id.replace(/:/g, '-')
+  // 인자 이름을 h 로 두지 않는다 — JSX 가 h(…) 로 바뀌어(tsconfig jsxFactory) 그 인자를 부른다
+  const helpMark = (rh: RowHelp) =>
+    pressBox(ui, `es-help-${helpKey(rh.id)}`, { content: [mark(ui, 'help', '도움말', SUB_LOOK)], cover: 2, onPress: () => acts.fold(`help:${rh.id}`), tip: rh.help.tip, tipRight: true })
+  const helpLines = (rh: RowHelp | undefined) =>
+    rh && folds.has(`help:${rh.id}`) ? (
+      <Box key={`es-hw-${helpKey(rh.id)}`} flexDirection="column" rowGap={0.2} paddingBottom={0.3} minWidth={0}>
+        {rh.help.lines.map((line, i) => (
+          <Text key={`es-hw-${helpKey(rh.id)}${i}`} color="subtle" size="footnote">
+            {line}
+          </Text>
+        ))}
+      </Box>
+    ) : null
+  /** 카드 줄 하나 — label null 이면 이름표 칸 없이 내용이 줄을 다 쓴다(세션 줄 · 칩) */
+  // 노트: panel.md#textUi — 글 화면은 줄 최소 높이 · 위아래 여백 없이(칸 셈이 줄 단위라 1.8줄이 두 줄, 패널 본문 줄이 귀함) · 이름표와 ? 사이 한 칸
+  const rowSize = look.isText ? {} : { minHeight: ROW_MIN_H, paddingY: 0.2 }
+  const cardRow = (key: string, label: string | null, content: unknown, help?: RowHelp): unknown[] => [
+    <Box key={key} columnGap={1} alignItems="center" minWidth={0} {...rowSize}>
+      {label !== null ? (
+        <Box key={`${key}-lb`} minWidth={LABEL_W} flexShrink={0} columnGap={look.isText ? 1 : 0.3} alignItems="center">
+          <Box flexShrink={0}>
+            <Text color="subtle" size="footnote">
+              {label}
+            </Text>
+          </Box>
+          {help ? helpMark(help) : null}
+        </Box>
+      ) : null}
+      <Box flexGrow={1} flexShrink={1} minWidth={0} columnGap={1} rowGap={0.4} flexWrap="wrap" alignItems="center">
+        {content}
+      </Box>
+      {label === null && help ? helpMark(help) : null}
+    </Box>,
+    helpLines(help),
+  ]
+  /** 카드 줄의 흐린 작은 글(값 · 없음) */
+  const subText = (text: string, color: 'subtle' | 'warning' = 'subtle') => (
+    <Text color={color} size="footnote">
+      {text}
+    </Text>
+  )
+  /** 카드 줄의 제목 칸(줄 남은 폭을 채우고 넘치면 … ) */
+  const titleCell = (text: string) => (
+    <Box flexGrow={1} flexShrink={1} minWidth={0}>
+      <Text wrap="truncate-end">{text}</Text>
+    </Box>
+  )
 
   // 노트: panel.md#manage — 경고 색 단추(떼어 내기): 단추는 글 색을 못 받아 경고 색 테두리 칸 + 글 위에 덮개. 누르는 단추 key = key
   const dangerButton = (key: string, label: string, onPress: () => unknown, tip: string) =>
@@ -838,115 +1015,121 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
     )
   }
 
-  // 노트: panel.md#heldCards — 메시지 카드 하나 = 보낸 세션 하나. shown = 그리는 항목(최근 10개 안), all = 그 세션 것 전부(카드의 전체 수락 · 삭제 —
-  // 시안대로 둘부터). 수락 어림은 마지막 메시지 카드 아래 한 번(요청 한 번 값은 어느 메시지든 같다)
+  // 노트: panel.md#heldCards — 메시지 덩이 하나 = 보낸 세션 하나. shown = 그리는 항목(최근 10개 안), all = 그 세션 것 전부(전체 수락 · 삭제 —
+  // 시안대로 둘부터). 수락 어림은 마지막 덩이 아래 한 번(요청 한 번 값은 어느 메시지든 같다).
+  // 0.1.27(시안 6판 「카드 속 카드는 빼고 줄로」): 칸 카드 안 덩이 — 둘레 카드 없이 머리 줄 + 항목 줄, 덩이 사이는 칸 카드의 가는 선
   const msgCard = (from: string, shown: readonly HeldReport[], all: readonly HeldReport[], isLast: boolean) => {
     const el = k(from)
     const keys = all.map(heldKey)
     const cost = v.accept ? acceptCost(v.accept.tokens, v.accept.isCold) : null
-    return card(`es-mc-${el}`, [
-      <Box columnGap={0.5} alignItems="center" minWidth={0}>
-        {mark(ui, 'message', '메시지', TEXT_LOOK)}
-        <Box flexShrink={1} minWidth={0}>
-          <Text bold wrap="truncate-end">
-            {bareTitle(v.metas.get(from)?.title ?? shown[0]?.title ?? from)}
-          </Text>
+    return (
+      <Box key={`es-mc-${el}`} flexDirection="column" paddingY={0.2} minWidth={0}>
+        <Box columnGap={0.5} alignItems="center" minWidth={0}>
+          {mark(ui, 'message', '메시지', TEXT_LOOK)}
+          <Box flexShrink={1} minWidth={0}>
+            <Text bold wrap="truncate-end">
+              {bareTitle(v.metas.get(from)?.title ?? shown[0]?.title ?? from)}
+            </Text>
+          </Box>
+          <Text color="subtle">{`받은 글 ${all.length}`}</Text>
+          <Box flexGrow={1} />
+          {all.length > 1 ? (
+            <Box columnGap={0.5} alignItems="center" flexShrink={0}>
+              <Button key={`es-acc-all-${el}`} variant="secondary" label="전체 수락" onPress={() => acts.accept(keys)} />
+              <Button key={`es-rej-all-${el}`} variant="secondary" label="전체 삭제" onPress={() => acts.reject(keys)} />
+            </Box>
+          ) : null}
         </Box>
-        <Text color="subtle">{`보고 ${all.length}`}</Text>
-        <Box flexGrow={1} />
-        {all.length > 1 ? (
-          <Box columnGap={0.5} alignItems="center" flexShrink={0}>
-            <Button key={`es-acc-all-${el}`} variant="secondary" label="전체 수락" onPress={() => acts.accept(keys)} />
-            <Button key={`es-rej-all-${el}`} variant="secondary" label="전체 삭제" onPress={() => acts.reject(keys)} />
+        {shown.map(heldItem)}
+        {isLast && cost ? (
+          <Box key="es-held-cost" columnGap={0.5} alignItems="center" marginTop={0.4}>
+            {v.accept?.isCold ? mark(ui, 'snowflake', '캐시 식음') : null}
+            <Text color="subtle" size="footnote">{`수락하면 ${cost}`}</Text>
           </Box>
         ) : null}
-      </Box>,
-      <Box height={0.06} marginY={0.3} backgroundColor="promptBorder" />,
-      ...shown.map(heldItem),
-      isLast && cost ? (
-        <Box key="es-held-cost" columnGap={0.5} alignItems="center" marginTop={0.4}>
-          {v.accept?.isCold ? mark(ui, 'snowflake', '캐시 식음') : null}
-          <Text color="subtle" size="footnote">{`수락하면 ${cost}`}</Text>
-        </Box>
-      ) : null,
-    ])
+      </Box>
+    )
   }
 
-  // 노트: panel.md#boardRow — 진행판 카드(메인 · 오케 — 「진행판」 칸 안, 0.1.26): 파일 이름 · 새 줄 수 · [넣기] = 입력칸에 · ▸ 보기 = 새 줄 펼침 · [바꾸기] = 경로 칸.
-  // 못 읽으면 주황 「진행판 못 읽음」 + [바꾸기]
-  const boardCard = (path: string, fresh: readonly string[] | null) => {
+  // 노트: panel.md#boardRow — 진행판 줄(메인 · 오케 — 「진행판」 칸 카드 안, 0.1.27 시안 6판 줄 꼴): 「자리」 파일 이름 · [바꾸기] = 경로 칸 /
+  // 「새 줄」 수 · [넣기] = 입력칸에 · ▸ 보기 = 새 줄 펼침. 못 읽으면 「새 줄」 주황 「못 읽음」 · [바꾸기]는 채운 단추(es-board-fix)
+  const boardRows = (path: string, fresh: readonly string[] | null, help: RowHelp): unknown[] => {
     const isOpen = folds.has('board-lines')
-    return card('es-board', [
-      <Box columnGap={0.5} alignItems="center" minWidth={0}>
-        {mark(ui, 'notebook', '진행판', TEXT_LOOK)}
-        {fresh === null ? (
-          <Text bold color="warning">
-            진행판 못 읽음
-          </Text>
-        ) : (
-          <Text bold>{fresh.length > 0 ? `새 줄 ${fresh.length}` : '새 줄 없음'}</Text>
+    return [
+      <Box key="es-board" flexDirection="column" minWidth={0}>
+        {cardRow(
+          'es-board-path',
+          '파일',
+          <Box columnGap={1} alignItems="center" flexGrow={1} minWidth={0}>
+            {mark(ui, 'notebook', '진행판', TEXT_LOOK)}
+            {titleCell(fileName(path))}
+            {fresh === null ? (
+              <Button key="es-board-fix" variant="secondary" label="바꾸기" onPress={() => acts.fold('board-edit', true)} />
+            ) : (
+              <Button key="es-board-edit" plain dimColor label="바꾸기" onPress={() => acts.fold('board-edit')} />
+            )}
+          </Box>,
+          help,
         )}
-        <Box flexShrink={1} minWidth={0}>
-          <Text color="subtle" wrap="truncate-end">
-            {fileName(path)}
-          </Text>
-        </Box>
-        <Box flexGrow={1} />
-        {fresh === null ? (
-          <Button key="es-board-fix" variant="secondary" label="바꾸기" onPress={() => acts.fold('board-edit', true)} />
-        ) : (
-          <Box columnGap={0.5} alignItems="center" flexShrink={0}>
-            {fresh.length > 0 ? <Button key="es-board-new" variant="secondary" label="넣기" onPress={() => void acts.boardFill()} /> : null}
-            {fresh.length > 0
-              ? pressBox(ui, 'es-board-foldb', {
-                  content: [
-                    mark(ui, isOpen ? 'down' : 'right', isOpen ? '접기' : '펼치기', SUB_LOOK),
-                    <Text color="subtle">
-                      보기
-                    </Text>,
-                  ],
-                  // 덮개는 그림 + 글 폭으로(고정 5칸이면 칸보다 넓어 글 위에 「…」 — 0.1.26 그림 도구로 잼)
-                  cover: coverCells(QUICK_ROW_PX / 7.71 + 0.5 + textCh('보기')),
-                  onPress: () => acts.fold('board-lines'),
-                })
-              : null}
-            <Button key="es-board-edit" plain dimColor label="바꾸기" onPress={() => acts.fold('board-edit')} />
-          </Box>
-        )}
+        {rline('es-board-l')}
+        {cardRow('es-board-fresh', '새 줄', [
+          fresh === null ? (
+            <Text key="es-board-n" bold color="warning">
+              못 읽음
+            </Text>
+          ) : (
+            <Text key="es-board-n" bold>
+              {fresh.length > 0 ? String(fresh.length) : '없음'}
+            </Text>
+          ),
+          fresh && fresh.length > 0 ? <Button key="es-board-new" variant="secondary" label="넣기" onPress={() => void acts.boardFill()} /> : null,
+          fresh && fresh.length > 0
+            ? pressBox(ui, 'es-board-foldb', {
+                content: [
+                  mark(ui, isOpen ? 'down' : 'right', isOpen ? '접기' : '펼치기', SUB_LOOK),
+                  <Text color="subtle">
+                    보기
+                  </Text>,
+                ],
+                // 덮개는 그림 + 글 폭으로(고정 5칸이면 칸보다 넓어 글 위에 「…」 — 0.1.26 그림 도구로 잼)
+                cover: coverCells(QUICK_ROW_PX / 7.71 + 0.5 + textCh('보기')),
+                onPress: () => acts.fold('board-lines'),
+              })
+            : null,
+        ])}
+        {isOpen && fresh
+          ? fresh.slice(0, LIST_LIMIT).map((line, i) => (
+              <Box key={`es-board-l${i}`} marginTop={0.2} minWidth={0}>
+                <Text color="subtle" wrap="truncate-end">
+                  {line.replace(/^- /, '')}
+                </Text>
+              </Box>
+            ))
+          : null}
       </Box>,
-      ...(isOpen && fresh
-        ? fresh.slice(0, LIST_LIMIT).map((line, i) => (
-            <Box key={`es-board-l${i}`} marginTop={0.2} minWidth={0}>
-              <Text color="subtle" wrap="truncate-end">
-                {line.replace(/^- /, '')}
-              </Text>
-            </Box>
-          ))
-        : []),
-    ])
+    ]
   }
 
   // 노트: panel.md#heldCards — 모인 보고 · 받은 글 카드(0.1.26 — 설치판 할 일 칸 메시지 카드를 칸마다 나눔): 보낸 세션마다 카드 하나, 최근 MSG_LIMIT 개만 그린다
   // (50개를 다 펴면 10만 자를 넘어 패널이 통째로 안 그려진다 — 0.1.3 시험에서 잼). 수락 어림은 마지막 카드 아래 한 번
-  const heldCards = (key: string, list: readonly HeldReport[]): unknown[] => {
+  // 0.1.27: 칸 카드 안 덩이 목록(보낸 세션마다 한 덩이 — 덩이 사이는 칸 카드의 가는 선). 「그 밖 N개」는 마지막 덩이 아래
+  const heldCards = (key: string, list: readonly HeldReport[]): unknown[][] => {
     if (list.length === 0) return []
     const shown = list.slice(0, MSG_LIMIT)
     const senders = [...new Set(shown.map(r => r.from))]
-    return [
-      ...senders.map((from, i) =>
-        msgCard(
-          from,
-          shown.filter(r => r.from === from),
-          list.filter(r => r.from === from),
-          i === senders.length - 1,
-        ),
+    return senders.map((from, i) => [
+      msgCard(
+        from,
+        shown.filter(r => r.from === from),
+        list.filter(r => r.from === from),
+        i === senders.length - 1,
       ),
-      list.length > MSG_LIMIT ? (
-        <Box key={`${key}-rest`} marginTop={0.4}>
-          <Text color="subtle">{`그 밖 ${list.length - MSG_LIMIT}개(오래된 것) — 위를 처리하면 이어서 보입니다. 카드의 전체 수락 · 전체 삭제는 그 세션 것 모두에 걸립니다`}</Text>
+      i === senders.length - 1 && list.length > MSG_LIMIT ? (
+        <Box key={`${key}-rest`} marginTop={0.4} paddingBottom={0.2}>
+          <Text color="subtle" size="footnote">{`그 밖 ${list.length - MSG_LIMIT}개(오래된 것) — 위를 처리하면 이어서 보입니다. 전체 수락 · 전체 삭제는 그 세션 것 모두에 걸립니다`}</Text>
         </Box>
       ) : null,
-    ]
+    ])
   }
 
   // 노트: panel.md#kidRow — 하위 줄 ⋯ 아래 그 세션 모인 보고: 줄마다 요약 · 수락 · 거절(본문은 ▸) · 둘부터 [전체 삭제] · 수락 어림 한 줄
@@ -974,7 +1157,7 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
 
   // 노트: panel.md#nowBox — 「지금」 줄(0.1.26 — 설치판 할 일 칸을 갈음, 시안 5.1): 사람이 할 것만 · 처리하면 사라짐. 입력 필요 하위 [열기] · 모인 보고(하위) ·
   // 받은 글(위 · 형제 · 다른 세션) · 진행판 새 줄(메인 · 오케) — 줄마다 [보기]는 그 칸을 편다. 할 것이 없으면 줄이 없다
-  const nowBox = () => {
+  const nowBox = (isNarrow = false) => {
     // isWrap = 글을 줄 끝에서 자르지 않고 꺾는다(묻는 줄 — 잘리면 물음이 안 보인다, 380 그림으로 봄)
     const line = (key: string, icon: QuickIcon, text: string, btn: unknown, side?: unknown, isWrap = false) => (
       <Box key={key} columnGap={0.5} alignItems="center" minWidth={0} marginTop={0.15}>
@@ -986,7 +1169,8 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
         {btn}
       </Box>
     )
-    const see = (key: string, to: ToolKey) => <Button key={key} variant="secondary" label="보기" onPress={() => acts.tool(to)} />
+    // 노트: panel.md#nowBox — [보기]는 그 칸을 펴기만(0.1.27 — 이미 펴져 있으면 그대로, 칸 · 역할 칩의 펴고 접기와 다름)
+    const see = (key: string, to: ToolKey) => <Button key={key} variant="secondary" label="보기" onPress={() => acts.openTool(to)} />
     // 입력 필요 하위: 때 · ❄ 깨우는 값(설치판 할 일 카드의 머리 오른쪽 그대로)
     const waitSide = (r: FamilyRow) => {
       const cost = v.ctxK.get(r.id)
@@ -1008,7 +1192,7 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
     const kidFrom = new Set(heldKid.map(r => r.from)).size
     const b = v.board
     // 노트: panel.md#nowBox — 서브가 세션을 열면 「오케로 바꿀까요?」(정본 9절 결정 20 · 시안 5.1): [오케로] = 오케 표시 · [그대로] = 이 패널에서 거둠(접힘 값 — 다시 열면 또 묻는다)
-    const openedNow = kids.filter(r => v.opened.has(r.id) && !r.isEnded).length
+    const openedNow = kids.filter(r => v.opened.has(r.id) && !r.isEnded && r.id !== v.heir).length
     const askOrche =
       v.role === 'sub' && openedNow > 0 && !folds.has(NOW_ORCHE_NO)
         ? line(
@@ -1035,6 +1219,14 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
         : null,
     ].filter(Boolean)
     if (items.length === 0) return null
+    // 노트: panel.md#narrowView — 좁은 칸은 테 없이(테 위아래가 12줄 가운데 두 줄을 먹는다)
+    if (isNarrow) {
+      return (
+        <Box key="es-now" flexDirection="column" minWidth={0}>
+          {items}
+        </Box>
+      )
+    }
     return (
       <Box key="es-now" flexDirection="column" borderStyle="round" borderColor="warning" paddingX={0.75} paddingY={0.3} marginTop={0.5} minWidth={0}>
         {items}
@@ -1046,7 +1238,7 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
   const chips = () => {
     const press = (c: (typeof SELF_CMDS)[number]) => (c.key === 'recap' ? acts.recap() : c.key === 'export' ? acts.exportSession(v.selfId) : acts.slash(c.key))
     const list: { name: string; icon: QuickIcon; label: string; tip: string; onPress: () => unknown; word?: unknown }[] = [
-      { name: 'ultra', icon: 'brain', label: ULTRA_WORD, tip: ULTRA_TIP, onPress: () => acts.ultrathink(), word: ultraWord(ui, v.ultraOn) },
+      { name: 'ultra', icon: 'brain', label: ULTRA_WORD, tip: ULTRA_TIP, onPress: () => acts.ultrathink(), word: ultraWord(ui, v.ultraOn, look.rainbowHex) },
       ...SELF_CMDS.map(c => ({ name: c.key, icon: CMD_ICONS[c.key], label: c.label, tip: c.key === 'recap' || c.key === 'export' ? `${c.what} — 바로 돎` : c.what, onPress: () => press(c) })),
     ]
     let x = 0
@@ -1073,12 +1265,14 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
     })
   }
 
-  // 노트: panel.md#selfView — 이 세션 머리(0.1.5 · 0.1.26): 제목 줄(터미널 그림 · 제목 — [범위] 뗌 · 고정 · 떼어 냄 · 때) + 관계 줄(역할 칩 · 위 · 하위 · 형제 · 문의).
-  // 역할 칩은 표시만이고 누르면 「역할 · 인계」 칸을 편다(시안 5.1 화면 꼴 넷 ④). 왕관은 칩으로 옮겼다
+  // 노트: panel.md#selfView — 이 세션 머리(0.1.5 · 0.1.26 · 0.1.27): 제목 줄(터미널 그림 · 제목 — [범위] 뗌 · 고정 · 떼어 냄 · 때) + 관계 줄(역할 칩 + 「위 · <위 세션 제목>」만).
+  // 0.1.27(시안 6판 7 · 진단 12 N5): 하위 · 형제 · 문의 수는 칸 아랫줄에만(같은 값 두 곳을 없앰). 때는 줄지 않는다(좁으면 「1분 / 전」 두 줄로 꺾였다 — 진단 13 T5).
+  // 역할 칩을 누르면 「역할 · 인계」 카드를 펴고 다시 누르면 접는다(acts.tool 토글 — 0.1.26 은 처음 편 칸이 역할 · 인계라 눌러도 안 바뀌어 보였다, 진단 13 T4)
   const selfHead = () => {
     if (!self) return null
     const role = ROLE_NAME[v.role]
-    const rel = [v.up ? `위 ${fitCells(bareTitle(v.up.title), 16)}` : '위 없음', `하위 ${kids.length}`, `형제 ${sibs.length}`, `문의 ${inqSent.length + heldOther.length}`].join(' · ')
+    // 노트: panel.md#openRows — 데스크톱 앱 밖 세션의 관계 줄은 역할만(0.1.28 — 위가 없다)
+    const rel = v.up ? `위 · ${bareTitle(v.up.title)}` : look.isApp ? '위 없음' : ''
     return (
       <Box key="es-self" flexDirection="column">
         <Box key="es-self-title" columnGap={0.5} alignItems="center" minWidth={0}>
@@ -1090,16 +1284,18 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
           {self.isStarred ? pinMark(ui, v.selfRow?.pinWhy ?? null) : null}
           {self.detached ? mark(ui, 'unlink', '떼어 냄 — 앱 보고 안 옴') : null}
           <Box flexGrow={1} />
-          <Text color="subtle" size="footnote">
-            {agoText(self.lastAt, v.now)}
-          </Text>
+          <Box key="es-self-when" flexShrink={0}>
+            <Text color="subtle" size="footnote">
+              {agoText(self.lastAt, v.now)}
+            </Text>
+          </Box>
         </Box>
-        <Box key="es-rel" columnGap={1} rowGap={0.3} alignItems="center" flexWrap="wrap" marginTop={0.4} minWidth={0}>
+        <Box key="es-rel" columnGap={1} alignItems="center" marginTop={0.4} minWidth={0}>
           {pressBox(ui, 'es-role-chip', {
             content: [roleMark(ui, v.role), <Text bold>{role}</Text>],
             cover: coverCells(QUICK_ROW_PX / 7.71 + 0.5 + textCh(role)),
             onPress: () => acts.tool('role'),
-            tip: '역할 · 인계 칸을 폅니다',
+            tip: pu.tool === 'role' ? '역할 · 인계 카드를 접습니다' : '역할 · 인계 카드를 폅니다',
             box: { borderStyle: 'round', borderColor: 'promptBorder', paddingX: 0.75, paddingY: 0.1, hover: { backgroundColor: 'promptBorderShimmer' } },
           })}
           <Box flexShrink={1} minWidth={0}>
@@ -1130,7 +1326,7 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
       </Box>
     )
     return (
-      <Box key={`es-adv-r${i}`} flexDirection="column" marginTop={0.5} minWidth={0}>
+      <Box key={`es-adv-r${i}`} flexDirection="column" paddingY={0.3} minWidth={0}>
         <Box columnGap={0.5} alignItems="center" minWidth={0}>
           <Text>{stampText(c.at)}</Text>
           {c.isAgent ? (
@@ -1156,10 +1352,13 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
     )
   }
 
-  // 노트: panel.md#advisorFold — 「어드바이저」 칸 안(0.1.13 → 0.1.26 도구판 칸): 호출 시점만 보인다. 머리 수는 입력창 위 advisor 칸과 같은 값, 안 불렸으면 그 말 한 줄
-  const advBody = (): unknown[] => {
+  // 노트: panel.md#advisorFold — 「어드바이저」 칸 안(0.1.13 → 0.1.26 도구판 칸 → 0.1.27 카드 줄): 호출 시점만 보인다. 머리 수는 입력창 위 advisor 칸과 같은 값, 안 불렸으면 그 말 한 줄.
+  // 0.1.27: 머리 줄(요약 · ?) 아래 호출 줄을 덩이로(안쪽 카드를 뺌 — 덩이 사이 가는 선)
+  const ADV_HELP: Help = { tip: '부른 때 · 하던 일 · 그 뒤만 보입니다', lines: ['advisor 를 부른 때 · 하던 일 · 그 뒤만 보입니다(조언 내용은 안 보임).', '수는 입력창 위 advisor 칸과 같은 값입니다(하위 에이전트 포함).'] }
+  const advBody = (): unknown[][] => {
     const a = v.advisorLog
-    if (!a) return [subLine('es-adv-none', '이 세션에서 아직 안 불렸습니다 — 불리면 호출 시점이 여기 남습니다.')]
+    const help = { id: 'adv:sum', help: ADV_HELP }
+    if (!a) return [cardRow('es-adv-none', null, subText('아직 안 불렸습니다 — 불리면 호출 시점이 여기 남습니다.'), help)]
     const calls = a.calls ?? []
     const inputs = calls.reduce((n, c) => n + (c.input ?? 0), 0)
     const outputs = calls.reduce((n, c) => n + (c.output ?? 0), 0)
@@ -1172,39 +1371,41 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
     if (a.calls === null) notes.push(a.error ? `기록을 못 읽었습니다 — ${a.error}` : '기록을 읽는 중…')
     if (isMore && hidden > 0) notes.push(`그 앞 ${hidden}건은 여기 안 그립니다`)
     if (a.calls !== null && a.isFresh && a.calls.length !== a.count) notes.push(`기록에서 찾은 호출은 ${a.calls.length}건입니다`)
+    const tail = [
+      !isMore && hidden > 0 ? (
+        <Box key="es-adv-more" paddingY={0.2}>
+          <Button key="es-adv-moreb" plain dimColor label={`▸ 이전 ${hidden}건 더 보기`} onPress={() => acts.fold(ADV_MORE)} />
+        </Box>
+      ) : null,
+      isMore && recent.length > ADV_SHOW ? (
+        <Box key="es-adv-more" paddingY={0.2}>
+          <Button key="es-adv-moreb" plain dimColor label="▾ 이전 것 접기" onPress={() => acts.fold(ADV_MORE)} />
+        </Box>
+      ) : null,
+      ...notes.map((text, i) => (
+        <Box key={`es-adv-n${i}`} paddingY={0.2}>
+          <Text color="subtle" size="footnote">
+            {text}
+          </Text>
+        </Box>
+      )),
+    ].filter(Boolean)
     return [
-      withTip(
-        ui,
-        'es-adv-sum',
-        <Text color="subtle" size="footnote">
-          {[`모두 ${a.count}번`, calls.length > 0 ? tokenPair(inputs, outputs) : null].filter(Boolean).join(' · ')}
-        </Text>,
-        a.tip,
+      cardRow(
+        'es-adv-head',
+        null,
+        withTip(
+          ui,
+          'es-adv-sum',
+          <Text color="subtle" size="footnote">
+            {[`모두 ${a.count}번`, calls.length > 0 ? tokenPair(inputs, outputs) : null].filter(Boolean).join(' · ')}
+          </Text>,
+          a.tip,
+        ),
+        help,
       ),
-      card(
-        'es-adv-list',
-        [
-          ...shown.map((c, i) => advisorRow(c, i)),
-          !isMore && hidden > 0 ? (
-            <Box key="es-adv-more" marginTop={0.4}>
-              <Button key="es-adv-moreb" plain dimColor label={`▸ 이전 ${hidden}건 더 보기`} onPress={() => acts.fold(ADV_MORE)} />
-            </Box>
-          ) : null,
-          isMore && recent.length > ADV_SHOW ? (
-            <Box key="es-adv-more" marginTop={0.4}>
-              <Button key="es-adv-moreb" plain dimColor label="▾ 이전 것 접기" onPress={() => acts.fold(ADV_MORE)} />
-            </Box>
-          ) : null,
-          ...notes.map((text, i) => (
-            <Box key={`es-adv-n${i}`} marginTop={0.3}>
-              <Text color="subtle" size="footnote">
-                {text}
-              </Text>
-            </Box>
-          )),
-        ],
-        true,
-      ),
+      ...shown.map((c, i) => [advisorRow(c, i)]),
+      ...(tail.length > 0 ? [tail] : []),
     ]
   }
 
@@ -1274,51 +1475,136 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
     </Box>
   )
 
-  // 노트: panel.md#manage — 「현재 세션」 칸(0.1.26 — 시안 5.1 「이 세션 손질만 · 권한 모드 줄 없음」, 0.1.21 세션 관리 카드에서 옮김): 고정 · Remote Control 끄기(켜졌을 때) · 정리 ·
-  // 끝내기 · 보관(바로 아래 묻는 글) · 떼어 내기(경고 색 — 될 때만). 오케 · 인계는 「역할 · 인계」, 들이기는 「하위 세션」 [밑으로 붙이기], 진행판 정하기는 「진행판」 칸
-  const mgrBody = (): unknown[] => {
+  // 노트: panel.md#manage — 「고정 · 보관」 칸(옛 「현재 세션」 — 0.1.26 시안 5.1 「이 세션 손질만 · 권한 모드 줄 없음」, 0.1.21 세션 관리 카드에서 옮김).
+  // 0.1.27(시안 6판 3): 하는 일로 세 줄 — 표시(고정 · Remote Control) · 정리(정리 · 제목 정리) · 닫기(끝내기 · 보관 — 바로 아래 묻는 글 · 떼어 내기 경고 색, 될 때만).
+  // 단추 아래 늘 있던 풀이(0.1.26 es-mgr-note)는 「표시」 옆 ? 로. 오케 · 인계는 「역할 · 인계」, 들이기는 「하위 세션」 [밑으로 붙이기], 진행판 정하기는 「진행판」 칸
+  const mgrBody = (): unknown[][] => {
     if (!self) return []
+    if (!look.isApp) return mgrOffBody()
     const sr = v.selfRow
     const canDetach = v.canDetach.has(v.selfId)
+    const help: Help = {
+      tip: '[정리] · [제목 정리]는 입력칸에 지시 글을 넣습니다',
+      lines: [
+        '[정리] · [제목 정리]는 입력칸에 지시 글을 넣습니다 · 다시 누르면 뺍니다.',
+        ...(canDetach ? ['떼어 내기는 되돌릴 수 없습니다.'] : []),
+      ],
+    }
     return [
-      <Box key="es-mgr-btns" columnGap={1} rowGap={0.5} flexWrap="wrap" alignItems="center" marginTop={0.3} minWidth={0}>
-        <Button key="es-s-pin" variant="secondary" label={self.isStarred ? '고정 풀기' : '고정'} onPress={() => acts.pin(v.selfId, !self.isStarred)} />
-        {pu.remote === v.selfId ? (
+      cardRow(
+        'es-mgr-show',
+        '표시',
+        [
+          <Button key="es-s-pin" variant="secondary" label={self.isStarred ? '고정 풀기' : '고정'} onPress={() => acts.pin(v.selfId, !self.isStarred)} />,
+          pu.remote === v.selfId ? (
+            <Button key="es-s-remote" variant="secondary" label="Remote Control 끄기" onPress={() => acts.remoteOff(v.selfId)} />
+          ) : (
+            <Button key="es-s-remote-on" variant="secondary" label="Remote Control" onPress={() => acts.remoteOn(v.selfId)} />
+          ),
+        ],
+        { id: 'mgr:show', help },
+      ),
+      [
+        ...cardRow('es-mgr-tidy', '정리', [
+          <Button key="es-s-clean" variant="secondary" label="정리" onPress={() => void acts.clean(v.selfId)} />,
+          <Button key="es-s-title" variant="secondary" label="제목 정리" onPress={() => void acts.titleTidy()} />,
+        ]),
+        folds.has('clean-hint') ? (
+          <Box key="es-clean-hint" paddingBottom={0.3}>
+            <Text color="subtle" size="footnote">
+              {canFix ? '입력칸에 정리 글을 넣었습니다 — 앞에 「하위 세션 → 일 → 보고」 세 줄 · 다시 누르면 뺍니다' : '입력칸에 정리 글을 넣었습니다 — 보내면 처리합니다 · 다시 누르면 뺍니다'}
+            </Text>
+          </Box>
+        ) : null,
+      ],
+      [
+        ...cardRow('es-mgr-close', '닫기', [
+          <Button
+            key="es-s-end"
+            variant="secondary"
+            label={sr?.isEnded ? '끝남 풀기' : '끝내기'}
+            onPress={() => (sr?.isEnded ? void acts.finish(v.selfId, false) : acts.ask(pu.ask === 'end' ? null : 'end'))}
+          />,
+          <Button key="es-s-arch" variant="secondary" label="보관" onPress={() => acts.ask(pu.ask === 'archive' ? null : 'archive')} />,
+          canDetach ? dangerButton('es-s-detach', '떼어 내기', () => acts.detach(v.selfId), '되돌릴 수 없습니다 — 연 세션에 보고가 더는 안 갑니다') : null,
+        ]),
+        pu.ask === 'end' || pu.ask === 'archive' ? askCard(pu.ask) : null,
+      ],
+    ]
+  }
+
+  // 노트: panel.md#appOnly — 「정리 · 끝내기」 칸(0.1.28 결정 7 — 데스크톱 앱 도구를 못 부르는 세션의 「고정 · 보관」 칸): 표시(Remote Control) · 정리(정리 · 제목 정리) · 닫기(끝내기 — 묻는 글).
+  // 고정 · 보관 · 떼어 내기는 넓은 자리에선 흐린 줄 + 까닭 한 줄, 좁은 칸에선 뺀다(결정 1)
+  const mgrOffBody = (): unknown[][] => {
+    const sr = v.selfRow
+    const help: Help = { tip: '[정리] · [제목 정리]는 입력칸에 지시 글을 넣습니다', lines: ['[정리] · [제목 정리]는 입력칸에 지시 글을 넣습니다 · 다시 누르면 뺍니다.'] }
+    return [
+      cardRow(
+        'es-mgr-show',
+        '표시',
+        pu.remote === v.selfId ? (
           <Button key="es-s-remote" variant="secondary" label="Remote Control 끄기" onPress={() => acts.remoteOff(v.selfId)} />
         ) : (
           <Button key="es-s-remote-on" variant="secondary" label="Remote Control" onPress={() => acts.remoteOn(v.selfId)} />
-        )}
-        <Button key="es-s-clean" variant="secondary" label="정리" onPress={() => void acts.clean(v.selfId)} />
-        <Button key="es-s-title" variant="secondary" label="제목 정리" onPress={() => void acts.titleTidy()} />
-        <Button
-          key="es-s-end"
-          variant="secondary"
-          label={sr?.isEnded ? '끝남 풀기' : '끝내기'}
-          onPress={() => (sr?.isEnded ? void acts.finish(v.selfId, false) : acts.ask(pu.ask === 'end' ? null : 'end'))}
-        />
-        <Button key="es-s-arch" variant="secondary" label="보관" onPress={() => acts.ask(pu.ask === 'archive' ? null : 'archive')} />
-        {canDetach ? dangerButton('es-s-detach', '떼어 내기', () => acts.detach(v.selfId), '되돌릴 수 없습니다 — 연 세션에 보고가 더는 안 갑니다') : null}
-      </Box>,
-      folds.has('clean-hint') ? (
-        <Box key="es-clean-hint" marginTop={0.3}>
-          <Text color="subtle">{canFix ? '입력칸에 정리 글을 넣었습니다 — 앞에 「하위 세션 → 일 → 보고」 세 줄 · 다시 누르면 뺍니다' : '입력칸에 정리 글을 넣었습니다 — 보내면 처리합니다 · 다시 누르면 뺍니다'}</Text>
-        </Box>
-      ) : null,
-      pu.ask ? askCard(pu.ask) : null,
-      subLine(
-        'es-mgr-note',
-        `[정리] · [제목 정리]는 입력칸에 지시 글을 넣습니다(${canFix ? '메인 · 오케 [정리]는 앞에 「하위 세션 → 일 → 보고」 세 줄' : '다시 누르면 뺌'}).${canDetach ? ' 떼어 내기는 되돌릴 수 없습니다.' : ''} 역할 · 위 · 하위 세션 손질은 각 칸에서.`,
+        ),
+        { id: 'mgr:show', help },
       ),
-    ]
+      [
+        ...cardRow('es-mgr-tidy', '정리', [
+          <Button key="es-s-clean" variant="secondary" label="정리" onPress={() => void acts.clean(v.selfId)} />,
+          <Button key="es-s-title" variant="secondary" label="제목 정리" onPress={() => void acts.titleTidy()} />,
+        ]),
+        folds.has('clean-hint') ? (
+          <Box key="es-clean-hint" paddingBottom={0.3}>
+            <Text color="subtle" size="footnote">
+              {canFix ? '입력칸에 정리 글을 넣었습니다 — 앞에 「하위 세션 → 일 → 보고」 세 줄 · 다시 누르면 뺍니다' : '입력칸에 정리 글을 넣었습니다 — 보내면 처리합니다 · 다시 누르면 뺍니다'}
+            </Text>
+          </Box>
+        ) : null,
+      ],
+      [
+        ...cardRow('es-mgr-close', '닫기', [
+          <Button
+            key="es-s-end"
+            variant="secondary"
+            label={sr?.isEnded ? '끝남 풀기' : '끝내기'}
+            onPress={() => (sr?.isEnded ? void acts.finish(v.selfId, false) : acts.ask(pu.ask === 'end' ? null : 'end'))}
+          />,
+        ]),
+        pu.ask === 'end' ? askCard('end') : null,
+      ],
+      look.isNarrow
+        ? []
+        : cardRow(
+            'es-mgr-no',
+            '안 됨',
+            <Box key="es-mgr-no-line" columnGap={1} alignItems="center" flexGrow={1} minWidth={0}>
+              {mark(ui, 'circleX', APP_ONLY_MGR, SUB_LOOK)}
+              <Box flexShrink={0}>
+                <Text color="subtle">{APP_ONLY_MGR}</Text>
+              </Box>
+              <Box flexShrink={1} minWidth={0}>
+                <Text color="subtle" size="footnote">
+                  {APP_ONLY}
+                </Text>
+              </Box>
+            </Box>,
+          ),
+    ].filter(s => s.length > 0)
   }
 
   // 노트: panel.md#roleTool — 「역할 · 인계」 칸(0.1.26 — 시안 5.1): 인계(같은 역할로 다음 차 — 입력칸에 지시 글) · 바꾸기(이 세션 역할만 — 오케 표시 켜고 끄기 · 떼어 내기).
   // 안 되는 줄은 흐린 줄 + 까닭 한 줄(정본 9절 결정 4). 메인 = 위 없는 오케가 하나뿐일 때 그 세션이라(meta.md#roleOf) 메인은 바꾸기로 안 내린다(결정 2)
-  const roleBody = (): unknown[] => {
+  // 0.1.27(시안 6판 3): 줄 셋 — 인계 · 바꾸기 · 안 됨(흐린 x 원 + 이름 + 까닭). 0.1.26 의 흐린 머리 줄 둘(인계 — … · 바꾸기 — …)과 「입력칸에 지시 글을 넣습니다」는 「인계」 옆 ? 로
+  const ROLE_HELP: Help = {
+    tip: '인계 — 같은 역할로 다음 차를 열고 끝남',
+    lines: ['인계 — 같은 역할로 다음 차를 열고 끝남. [인계]는 입력칸에 지시 글을 넣습니다.', '바꾸기 — 역할만(같은 일 · 이름만 바뀔 때).'],
+  }
+  const roleBody = (): unknown[][] => {
     if (!self) return []
     const role = v.role
     const no = (key: string, label: string, why: string) => (
-      <Box key={key} columnGap={1} alignItems="center" marginTop={0.3} minWidth={0}>
+      <Box key={key} columnGap={1} alignItems="center" minWidth={0}>
         {mark(ui, 'circleX', label, SUB_LOOK)}
         {/* 이름표는 한 줄 — 줄면 380 · 480 폭에서 「오케 풀 / 기」처럼 낱말 중간에서 꺾였다(어드바이저 줄 이름표와 같은 길, 까닭 글만 꺾임) */}
         <Box flexShrink={0}>
@@ -1336,7 +1622,7 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
     const nos: unknown[] = []
     if (role === 'main') nos.push(no('es-r-no-main', '다른 역할로', '메인이 비게 되어 안 됨 — 메인 인계로 넘기고 끝냄'))
     if (role === 'orche') {
-      if (kids.length > 0) nos.push(no('es-r-no-unorche', '오케 풀기', `하위 ${kids.length} 가 아직 있음 — 다 끝난 뒤에(아니면 오케 인계)`))
+      if (kids.length > 0) nos.push(no('es-r-no-unorche', '오케 풀기', `하위 ${kids.length}개가 아직 있음 — 다 끝난 뒤에(아니면 오케 인계)`))
       else buttons.push(<Button key="es-s-orche" variant="secondary" label="오케 풀기" onPress={() => acts.orche(v.selfId, false)} />)
     }
     if (role === 'sub' || role === 'solo') buttons.push(<Button key="es-s-orche" variant="secondary" label="오케로" onPress={() => acts.orche(v.selfId, true)} />)
@@ -1352,205 +1638,308 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
     }
     if (role !== 'main') nos.push(no('es-r-no-tomain', '메인으로', v.mainTitle ? `메인은 「${fitCells(bareTitle(v.mainTitle), 20)}」 — 메인 인계로만` : '위 없는 오케가 하나뿐이면 그 세션이 메인입니다'))
     return [
-      subLine('es-role-hand-t', '인계 — 같은 역할로 다음 차를 엶 · 이 세션은 끝남'),
-      <Box key="es-role-hand" columnGap={1} alignItems="center" flexWrap="wrap" marginTop={0.3} minWidth={0}>
-        <Button key="es-s-handoff" variant="secondary" label={`${ROLE_NAME[role]} 인계`} onPress={() => acts.handoff()} />
-        <Text color="subtle" size="footnote">
-          입력칸에 지시 글을 넣습니다
-        </Text>
-      </Box>,
-      subLine('es-role-chg-t', '바꾸기 — 이 세션 역할만(같은 일 · 이름만 바뀔 때)'),
-      buttons.length > 0 ? (
-        <Box key="es-role-chg" columnGap={1} rowGap={0.5} alignItems="center" flexWrap="wrap" marginTop={0.3} minWidth={0}>
-          {buttons}
-        </Box>
-      ) : null,
-      ...nos,
-    ]
+      cardRow('es-role-hand', '인계', <Button key="es-s-handoff" variant="secondary" label={`${ROLE_NAME[role]} 인계`} onPress={() => acts.handoff()} />, { id: 'role:hand', help: ROLE_HELP }),
+      buttons.length > 0 ? cardRow('es-role-chg', '바꾸기', buttons) : [],
+      nos.length > 0
+        ? cardRow(
+            'es-role-no',
+            '안 됨',
+            <Box flexDirection="column" rowGap={0.3} flexGrow={1} minWidth={0}>
+              {nos}
+            </Box>,
+          )
+        : [],
+    ].filter(s => s.length > 0)
   }
 
-  // 노트: panel.md#compose — 보낼 곳 줄(0.1.19 메시지 보내기 칸 줄 → 0.1.26 「위 세션」 · 「다른 세션」 칸): 흐린 관계 · 제목 · [보내기], 펴면 바로 아래 글 칸(깨우는 값 카드 길 그대로).
-  // 그 밖 세션은 입력창 >>이름(0.1.25 — [전체] 찾기를 뺌)
-  const sendLine = (r: SendRow) => {
+  // 노트: panel.md#compose — 보낼 곳 줄(0.1.19 메시지 보내기 칸 줄 → 0.1.26 「위 세션」 · 「다른 세션」 칸 → 0.1.27 카드 줄): 이름표 = 관계(연 세션 · 주인 · 메인) · 제목 · [보내기],
+  // 펴면 바로 아래 글 칸(깨우는 값 카드 길 그대로). 그 밖 세션은 입력창 >>이름(0.1.25 — [전체] 찾기를 뺌)
+  const sendLine = (r: SendRow, help?: RowHelp): unknown[] => {
     const at = `${COMPOSE_AT}${r.id}`
     const el = k(r.id)
     const isWriting = pu.sending === at
-    return (
-      <Box key={`es-sendto-${el}`} flexDirection="column" minWidth={0}>
-        <Box key={`es-sendto-h-${el}`} columnGap={1} alignItems="center" minWidth={0}>
-          <Box key={`es-sendto-t-${el}`} width={SEND_TAG_W} flexShrink={0}>
-            <Text color="subtle">{r.tag}</Text>
-          </Box>
-          <Box key={`es-sendto-n-${el}`} flexGrow={1} flexShrink={1} minWidth={0}>
-            <Text wrap="truncate-end">{bareTitle(r.title)}</Text>
-          </Box>
+    return [
+      ...cardRow(
+        `es-sendto-${el}`,
+        r.tag,
+        <Box columnGap={1} alignItems="center" flexGrow={1} minWidth={0}>
+          {titleCell(bareTitle(r.title))}
           <Button key={`es-sendto-b-${el}`} variant="secondary" label={isWriting ? '닫기' : '보내기'} onPress={() => acts.send(at)} />
-        </Box>
-        {isWriting ? sending(`c${el}`, r.id, r.title, true) : null}
-      </Box>
-    )
+        </Box>,
+        help,
+      ),
+      isWriting ? sending(`c${el}`, r.id, r.title, true) : null,
+    ]
   }
 
-  // 노트: panel.md#toolBoard — 칸 안 흐린 한 줄 · 작은 머리(시안 .sec)
-  const subLine = (key: string, text: string) => (
-    <Box key={key} marginTop={0.4} minWidth={0}>
-      <Text color="subtle" size="footnote">
-        {text}
-      </Text>
-    </Box>
-  )
+  // 노트: panel.md#toolCard — 「보낸 글」 줄(앱 도착 기록 — 보냄 · 도착 · 읽음 · 답함 · 안 감): 이름표 + 줄(sentList), 없으면 「없음」. 상태 차례 풀이(0.1.26 머리 글)는 ? 로
+  const SENT_HELP_LINE = '보낸 글은 보냄 → 도착 → 읽음 → 답함으로 보입니다(앱 도착 기록).'
+  const sentRow = (key: string, list: readonly SentRow[], help?: RowHelp) => cardRow(key, '보낸 글', list.length === 0 ? subText('없음') : sentList(`${key}-l`, list), help)
 
-  // 노트: panel.md#toolBoard — 보낸 글 묶음(앱 도착 기록 — 보냄 · 도착 · 읽음 · 답함 · 안 감): 작은 머리 + 줄(sentList). 없으면 머리 아래 「보낸 글 없음」
-  const sentBlock = (key: string, label: string, list: readonly SentRow[]) => (
-    <Box key={key} flexDirection="column" minWidth={0}>
-      {subLine(`${key}-h`, label)}
-      {sentList(`${key}-l`, list)}
-    </Box>
-  )
-
-  // 노트: panel.md#toolBoard — 「위 세션」 칸: 위 줄 [보내기] · 보낸 글(앱 도착 기록) · 위에서 받은 글. 위가 없는 메인 · 맨 위 오케는 칸을 흐리지 않고 「보고는 사용자에게」(시안 5.1 정할 것 1),
-  // 단독은 흐린 칸에 한 줄
-  const msgBody = (): unknown[] => {
-    if (v.role === 'solo') return [subLine('es-msg-none', '위가 없어 쓸 일이 없습니다 — 다른 세션과는 「다른 세션」 칸으로.')]
+  // 노트: panel.md#toolBoard — 「위 세션」 칸: 위 줄 [보내기] · 보고 꼴로 · 보낸 글(앱 도착 기록) · 위에서 받은 글. 위가 없는 메인 · 맨 위 오케는 칸을 흐리지 않고
+  // 「보고는 사용자에게」(시안 5.1 정할 것 1), 단독은 흐린 칸에 한 줄. 0.1.27: 줄 꼴 — 이름표 「앞 차수」(나무 ②) · 「연 세션」 · 「주인」(위 줄) · 「보고」 · 「보낸 글」, 풀이는 위 줄 이름표 옆 ?
+  const MSG_HELP_LINES = ['[보고 꼴로]는 끝난 것 · 하는 중 · 막힌 것 · 기다리는 결정 · 다음 다섯 칸을 입력칸에 넣습니다.', SENT_HELP_LINE]
+  const msgBody = (): unknown[][] => {
+    if (v.role === 'solo') return [cardRow('es-msg-none', '위', subText('위가 없어 쓸 일이 없습니다 — 다른 세션과는 「다른 세션」 칸으로.'))]
     // 노트: panel.md#reportForm — [보고 꼴로](0.1.26 — 정본 「시안 5.1 확정」 ②): 다섯 칸 보고 글을 입력칸에. 위가 있으면 끝에 전달 신호(차례 끝 답이 위로), 없으면 채팅에
-    const reportRow = (label: string) => (
-      <Box key="es-msg-report-row" columnGap={1} rowGap={0.4} alignItems="center" flexWrap="wrap" marginTop={0.5} minWidth={0}>
-        <Button key="es-msg-report" variant="secondary" label={label} onPress={() => void acts.report()} />
-        <Box flexShrink={1} minWidth={0}>
-          <Text color="subtle" size="footnote">
-            끝난 것 · 하는 중 · 막힌 것 · 기다리는 결정 · 다음
-          </Text>
-        </Box>
-      </Box>
-    )
+    const reportRow = (label: string) => cardRow('es-msg-report-row', '보고', <Button key="es-msg-report" variant="secondary" label={label} onPress={() => void acts.report()} />)
     if (!v.up) {
-      return [
-        <Box key="es-msg-top" marginTop={0.3} minWidth={0}>
-          <Text>위 없음 — 보고는 사용자에게(채팅)</Text>
-        </Box>,
-        reportRow('보고 꼴로 — 채팅에'),
-        subLine('es-msg-other', '다른 세션과는 「다른 세션」 칸으로.'),
-      ]
+      const help: RowHelp = { id: 'msg:top', help: { tip: '보고는 사용자에게(채팅)', lines: [MSG_HELP_LINES[0]!, '다른 세션과는 「다른 세션」 칸으로.'] } }
+      return [cardRow('es-msg-top', '위', <Text>없음 — 보고는 사용자에게(채팅)</Text>, help), reportRow('보고 꼴로 — 채팅에')]
     }
     const up = v.up
     return [
-      card('es-msg-up', [sendLine(up)]),
+      sendLine(up, { id: 'msg:up', help: { tip: '[보고 꼴로] · 보낸 글 풀이', lines: MSG_HELP_LINES } }),
       reportRow('보고 꼴로'),
-      sentBlock('es-msg-sent', '보낸 글 — 보냄 → 도착 → 읽음 → 답함', v.sent.filter(s => s.to === up.id)),
+      sentRow('es-msg-sent', v.sent.filter(s => s.to === up.id)),
       ...heldCards('es-msg-held', heldUp),
     ]
   }
 
-  // 노트: panel.md#toolBoard — 「형제 세션」 칸: 줄마다 [보내기] · [가기](sibRow) · 형제에게서 받은 글
-  const colBody = (): unknown[] => {
-    if (sibs.length === 0) return [subLine('es-col-none', '같은 위 밑 형제가 없습니다.')]
+  // 노트: panel.md#toolBoard — 「형제 세션」 칸: 줄마다 [보내기] · [가기](sibRow) · 보낸 글 · 형제에게서 받은 글. 형제 수는 칸 아랫줄에서 빼고 이 카드의 줄로(0.1.27)
+  const COL_HELP: Help = { tip: '형제 = 같은 위 세션 밑의 세션', lines: ['형제 = 같은 위 세션 밑의 세션입니다.', SENT_HELP_LINE] }
+  const colBody = (): unknown[][] => {
+    if (sibs.length === 0) return [cardRow('es-col-none', null, subText('같은 위 밑 형제가 없습니다.'))]
     const sentSib = v.sent.filter(s => sibIds.has(s.to))
     return [
-      card('es-sibs', capped(sibs, 'sibs', sibRow), true),
-      sentSib.length > 0 ? sentBlock('es-col-sent', '보낸 글 — 보냄 → 도착 → 읽음 → 답함', sentSib) : null,
+      [
+        <Box key="es-sibs" flexDirection="column" minWidth={0}>
+          {capped(sibs, 'sibs', sibRow)}
+        </Box>,
+      ],
+      sentRow('es-col-sent', sentSib, { id: 'col:sent', help: COL_HELP }),
       ...heldCards('es-col-held', heldSib),
     ]
   }
 
-  // 노트: panel.md#toolBoard — 「다른 세션」 칸: 메인(위가 아닐 때) [보내기] · 보낸 글(위 · 하위 · 형제 밖) · 그 밖에서 받은 글 · 입력창 >>이름 안내
-  const inqBody = (): unknown[] => [
-    v.mainRow ? card('es-inq-main', [sendLine(v.mainRow)]) : null,
-    sentBlock('es-inq-sent', '보낸 글 — 보냄 → 도착 → 읽음 → 답함', inqSent),
+  // 노트: panel.md#toolBoard — 「다른 세션」 칸: 메인(위가 아닐 때) [보내기] · 보낸 글(위 · 하위 · 형제 밖) · 그 밖에서 받은 글 · 「그 밖」 입력창 >>이름
+  const INQ_HELP: Help = { tip: '메인 = 입력창 >>메인 과 같은 세션', lines: ['메인 = 입력창 「전달」 · >>메인 과 같은 세션입니다.', SENT_HELP_LINE] }
+  // 노트: panel.md#openRows — 지금 열린 세션 한 줄(0.1.28 결정 2 의 (나) · 6): 이름표(묶음 첫 줄 — 「데스크톱」 · VS Code · 터미널) · └(나무 아래) · 제목 · 표지(메인 · 오케) · [보내기] · [가기](데스크톱 세션만).
+  // [보내기]는 위 · 형제 줄과 같은 보낼 칸(sendLine 길)
+  const openRow = (r: OpenRow, label: string, showTag: boolean): unknown[] => {
+    const at = `${COMPOSE_AT}${r.id}`
+    const el = k(r.id)
+    const isWriting = pu.sending === at
+    return [
+      ...cardRow(
+        `es-open-${el}`,
+        label,
+        <Box columnGap={1} alignItems="center" flexGrow={1} minWidth={0}>
+          {r.depth > 0 ? (
+            <Box flexShrink={0} marginLeft={(r.depth - 1) * 2}>
+              <Text color="subtle">└</Text>
+            </Box>
+          ) : null}
+          {titleCell(bareTitle(r.title))}
+          {showTag && r.tag ? (
+            <Box flexShrink={0}>
+              <Text color="subtle" size="footnote">
+                {r.tag}
+              </Text>
+            </Box>
+          ) : null}
+          <Button key={`es-open-b-${el}`} variant="secondary" label={isWriting ? '닫기' : '보내기'} onPress={() => acts.send(at)} />
+          {r.canGo ? <Button key={`es-open-go-${el}`} variant="secondary" label="가기" onPress={() => acts.go(r.id)} /> : null}
+        </Box>,
+      ),
+      isWriting ? sending(`o${el}`, r.id, r.title, true) : null,
+    ]
+  }
+  // 노트: panel.md#openRows — 데스크톱 세션(엔진 세션 패널만 — 데스크톱 앱 세션 기록의 나무 차례) · 데스크톱 앱 밖 세션(머리 한 줄 아래 · 두 패널 다)
+  const openDesk = (): unknown[][] => (v.openDesk.length === 0 ? [] : [v.openDesk.flatMap((r, i) => openRow(r, i === 0 ? OPEN_DESK : '', true))])
+  const openOut = (): unknown[][] =>
+    v.openOut.length === 0
+      ? []
+      : [
+          [
+            <Box key="es-open-out-head" paddingY={0.2} minWidth={0}>
+              <Text color="subtle" size="footnote">
+                {OPEN_OUT_HEAD}
+              </Text>
+            </Box>,
+            ...v.openOut.flatMap((r, i) => openRow(r, i > 0 && v.openOut[i - 1]!.tag === r.tag ? '' : (r.tag ?? ''), false)),
+          ],
+        ]
+  const inqBody = (): unknown[][] => [
+    ...(v.mainRow ? [sendLine(v.mainRow, { id: 'inq:main', help: INQ_HELP })] : []),
+    ...openDesk(),
+    ...openOut(),
+    sentRow('es-inq-sent', inqSent, v.mainRow ? undefined : { id: 'inq:sent', help: INQ_HELP }),
     ...heldCards('es-inq-held', heldOther),
-    subLine('es-send-find', '다른 세션은 입력창에 >>이름'),
+    cardRow('es-send-find', '그 밖', subText('다른 세션은 입력창에 >>이름')),
   ]
 
-  // 노트: panel.md#kidRow — 「하위 세션」 칸(시안 5.1 repDetail): 머리 수 줄 · 하위 줄(kidRow) · 받는 법 한 줄([설정] 값) · 메인 · 오케면 손질 머리 「오케 몫」 + [모두 보관] · [밑으로 붙이기],
-  // 서브 · 단독이면 손질 대신 한 줄. 하위가 없어도 메인 · 오케는 [밑으로 붙이기]를 둔다(설치판 들이기가 하위 없을 때도 있었다)
-  const repBody = (): unknown[] => {
+  // 노트: panel.md#kidRow — 「하위 세션」 칸(시안 5.1 repDetail · 0.1.27 줄 꼴): 하위 줄(kidRow) · 「받는 법」 줄([설정] 값) · 메인 · 오케면 「손질」 줄(「오케 몫」 + [모두 보관] · [밑으로 붙이기]),
+  // 서브 · 단독의 「손질은 메인 · 오케만」은 「받는 법」 옆 ? 로. 하위가 없어도 메인 · 오케는 [밑으로 붙이기]를 둔다(설치판 들이기가 하위 없을 때도 있었다)
+  const repBody = (): unknown[][] => {
     const ended = kids.filter(r => r.isEnded)
-    const out: unknown[] = []
-    if (kids.length === 0) out.push(subLine('es-rep-none', '하위 세션이 없습니다.'))
+    const fixLine = canFix ? '손질은 줄마다 ⋯ 이나 「손질」 줄에서 합니다(오케 세션에서만).' : '하위 세션 손질은 메인 · 오케만 — 오케로 바꾸면 손질이 생깁니다.'
+    const recvHelp: RowHelp = { id: 'rep:recv', help: { tip: '받는 법 바꾸기는 [설정] 「자식 보고」', lines: ['받는 법 바꾸기는 [설정] 「자식 보고」.', fixLine] } }
+    const out: unknown[][] = []
+    if (kids.length === 0) out.push(cardRow('es-rep-none', null, subText('하위 세션이 없습니다.')))
     else {
-      out.push(subLine('es-rep-sum', [`하위 ${kids.length}`, heldKid.length > 0 ? `모인 보고 ${heldKid.length}` : null, ended.length > 0 ? `끝남 ${ended.length}` : null].filter(Boolean).join(' · ')))
-      out.push(card('es-kids', capped(kids, 'kids', kidRow), true))
-      out.push(subLine('es-rep-recv', `받는 법 — ${v.settings.reports.value === 'app' ? '앱 그대로' : '모아 둠'} · 바꾸기는 [설정] 「자식 보고」`))
+      out.push([
+        <Box key="es-kids" flexDirection="column" minWidth={0}>
+          {capped(kids, 'kids', kidRow)}
+        </Box>,
+      ])
+      out.push(cardRow('es-rep-recv', '받는 법', <Text>{v.settings.reports.value === 'app' ? '앱 그대로' : '모아 둠'}</Text>, recvHelp))
     }
     if (canFix) {
-      out.push(
-        <Box key="es-rep-fix" columnGap={0.5} rowGap={0.4} alignItems="center" flexWrap="wrap" marginTop={0.6} minWidth={0}>
-          <Text color="subtle" size="footnote">
-            손질
-          </Text>
-          {tagBox('es-rep-fix-tag', '오케 몫')}
-          <Text color="subtle" size="footnote">
-            줄마다 ⋯ · 여기
-          </Text>
-        </Box>,
-        <Box key="es-rep-fixb" columnGap={1} rowGap={0.5} alignItems="center" flexWrap="wrap" marginTop={0.3} minWidth={0}>
-          {/* 노트: panel.md#kidRow — [모두 보관](끝난 하위 둘부터): bypass 만 — auto 는 지시 글 하나에 보관이 여럿 들어가 판정기가 뒤엣것을 막을 수 있어(정본 10절 「지시 글은 동작 하나에 하나」) 줄마다 [보관] */}
-          {ended.length > 1 ? (
-            v.isBypass ? (
-              <Button key="es-ended-all" variant="secondary" label="모두 보관" onPress={() => void acts.archiveAll(ended.map(r => r.id))} />
-            ) : (
-              tagBox('es-ended-auto', 'auto — 보관은 줄마다', 'warn')
-            )
-          ) : null}
-          {v.adopt.length > 0 ? <Button key="es-adopt-b" variant="secondary" label={`밑으로 붙이기 ${folds.has('adopt') ? '▾' : '▸'}`} onPress={() => acts.fold('adopt')} /> : null}
-        </Box>,
+      out.push([
+        ...cardRow(
+          'es-rep-fix',
+          '손질',
+          [
+            tagBox('es-rep-fix-tag', '오케 몫'),
+            // 노트: panel.md#kidRow — [모두 보관](끝난 하위 둘부터): bypass 만 — auto 는 지시 글 하나에 보관이 여럿 들어가 판정기가 뒤엣것을 막을 수 있어(정본 10절 「지시 글은 동작 하나에 하나」) 줄마다 [보관]
+            ended.length > 1 ? (
+              v.isBypass ? (
+                <Button key="es-ended-all" variant="secondary" label="모두 보관" onPress={() => void acts.archiveAll(ended.map(r => r.id))} />
+              ) : (
+                tagBox('es-ended-auto', 'auto — 보관은 줄마다', 'warn')
+              )
+            ) : null,
+            v.adopt.length > 0 ? <Button key="es-adopt-b" variant="secondary" label={`밑으로 붙이기 ${folds.has('adopt') ? '▾' : '▸'}`} onPress={() => acts.fold('adopt')} /> : null,
+          ],
+          kids.length === 0 ? { id: 'rep:fix', help: { tip: '손질은 줄마다 ⋯ · 이 줄에서', lines: [fixLine] } } : undefined,
+        ),
         v.adopt.length > 0 && folds.has('adopt') ? adoptList() : null,
-      )
-    } else if (kids.length > 0) out.push(subLine('es-rep-sub', '하위 세션 손질은 메인 · 오케만 — 오케로 바꾸면 손질이 생깁니다.'))
+      ])
+    }
     return out
   }
 
-  // 노트: panel.md#boardRow — 「진행판」 칸: 메인 · 오케 = 진행판 카드(경로 · 새 줄 · [넣기] · 보기 · [바꾸기]) 또는 「자리가 없습니다」 + [자리 정하기], 서브 = 위 진행판 이름,
-  // 단독 = 흐린 칸에 한 줄
-  const brdBody = (): unknown[] => {
+  // 노트: panel.md#boardRow — 「진행판」 칸(0.1.27 줄 꼴): 메인 · 오케 = 「파일」 · 「새 줄」 줄(boardRows) 또는 「파일」 「진행판 자리가 없습니다」 + [자리 정하기], 서브 = 「위 세션 것」 위 진행판 이름,
+  // 단독 = 흐린 칸에 한 줄. 물음 · 끝을 적는 곳 풀이(0.1.26 흐린 줄)는 ? 로
+  const brdBody = (): unknown[][] => {
     const b = v.board
     if (b) {
-      return [
-        b.path === null ? (
-          <Box key="es-board-none" columnGap={1} alignItems="center" marginTop={0.3} minWidth={0}>
-            <Box flexGrow={1} minWidth={0}>
-              <Text color="warning">진행판 자리가 없습니다</Text>
+      const help: RowHelp = { id: 'brd:own', help: { tip: '하위 세션이 물음 · 끝을 적는 md', lines: ['진행판 — 하위 세션이 물음 · 끝을 적는 md(새 줄 수를 「지금」 줄 · 진행판 칸에 보입니다).'] } }
+      const edit = folds.has('board-edit') ? boardInput(b.path) : null
+      if (b.path === null) {
+        return [
+          [
+            ...cardRow(
+              'es-board-none',
+              '파일',
+              <Box columnGap={1} alignItems="center" flexGrow={1} minWidth={0}>
+                <Box flexGrow={1} flexShrink={1} minWidth={0}>
+                  <Text color="warning">진행판 자리가 없습니다</Text>
+                </Box>
+                <Button key="es-board-edit" variant="secondary" label="자리 정하기" onPress={() => acts.fold('board-edit')} />
+              </Box>,
+              help,
+            ),
+            edit,
+          ],
+        ]
+      }
+      return [[...boardRows(b.path, b.fresh, help), edit]]
+    }
+    if (v.role === 'solo') return [cardRow('es-board-solo', null, subText('위도 아래도 없어 쓸 진행판이 없습니다.'))]
+    const help: RowHelp = { id: 'brd:up', help: { tip: '물음 · 끝은 위 진행판에 적습니다', lines: ['물음 · 끝은 위 진행판에 적습니다 — Claude 가 씁니다.'] } }
+    return [
+      cardRow(
+        'es-board-up',
+        '위 세션 것',
+        v.boardHint ? (
+          <Box columnGap={0.5} alignItems="center" flexGrow={1} minWidth={0}>
+            {mark(ui, 'notebook', '진행판', TEXT_LOOK)}
+            <Box flexShrink={1} minWidth={0}>
+              <Text wrap="truncate-end">{v.boardHint.name}</Text>
             </Box>
-            <Button key="es-board-edit" variant="secondary" label="자리 정하기" onPress={() => acts.fold('board-edit')} />
+            <Box flexShrink={1} minWidth={0}>
+              <Text color="subtle" size="footnote" wrap="truncate-end">{`${fitCells(bareTitle(v.boardHint.owner), 24)}의 진행판`}</Text>
+            </Box>
           </Box>
         ) : (
-          boardCard(b.path, b.fresh)
+          subText('위에 진행판이 없습니다.')
         ),
-        folds.has('board-edit') ? boardInput(b.path) : null,
-      ]
-    }
-    if (v.role === 'solo') return [subLine('es-board-solo', '위도 아래도 없어 쓸 진행판이 없습니다.')]
-    return [
-      v.boardHint ? (
-        <Box key="es-board-up" columnGap={0.5} alignItems="center" marginTop={0.3} minWidth={0}>
-          {mark(ui, 'notebook', '진행판', TEXT_LOOK)}
-          <Box flexShrink={1} minWidth={0}>
-            <Text wrap="truncate-end">{`위 것 — ${v.boardHint.name}`}</Text>
-          </Box>
-          <Box flexShrink={1} minWidth={0}>
-            <Text color="subtle" size="footnote" wrap="truncate-end">{`${fitCells(bareTitle(v.boardHint.owner), 24)}의 진행판`}</Text>
-          </Box>
-        </Box>
-      ) : (
-        subLine('es-board-noup', '위에 진행판이 없습니다.')
+        help,
       ),
-      subLine('es-board-how', '물음 · 끝은 위 진행판에 적습니다 — Claude 가 씁니다.'),
     ]
   }
 
-  // 노트: panel.md#selfCmds — 「명령」 칸: 명령 칩(설치판 이 세션 칸 칩 그대로) + 명령으로 되는 것 한 줄(정본 9절 「울트라띵크 작업 줄 표시 · 명령 단추와 메시지 단추」 답)
-  const cmdBody = (): unknown[] => [
-    <Box key="es-self-chips" columnGap={0.5} rowGap={0.5} flexWrap="wrap" alignItems="center" marginTop={0.4}>
-      {chips()}
-    </Box>,
-    subLine('es-cmd-note', '지금 지점에서 가르는 포크 · 곁 질문은 명령과 같습니다. 앞 지점에서 가르기 · 되돌리기는 메시지 단추가 바로 갑니다.'),
+  // 노트: panel.md#selfCmds — 「명령」 칸: 명령 칩(설치판 이 세션 칸 칩 그대로) 한 줄 + 줄 끝 ?(명령으로 되는 것 — 정본 9절 「울트라띵크 작업 줄 표시 · 명령 단추와 메시지 단추」 답, 0.1.26 흐린 줄)
+  const CMD_HELP: Help = { tip: '포크 · 곁 질문 · 되돌리기와 명령', lines: ['/fork · /btw 는 지금 지점에서 씁니다.', '앞 지점에서 가르기 · 되돌리기는 채팅 메시지의 단추로 바로 됩니다.'] }
+  const cmdBody = (): unknown[][] => [
+    cardRow(
+      'es-cmd-row',
+      null,
+      <Box key="es-self-chips" columnGap={0.5} rowGap={0.5} flexWrap="wrap" alignItems="center" flexGrow={1} minWidth={0}>
+        {chips()}
+      </Box>,
+      { id: 'cmd:chips', help: CMD_HELP },
+    ),
   ]
 
-  // 노트: panel.md#toolBoard — 도구판(0.1.26 — 시안 5.1 화면 꼴 넷 ①): 묶음 머리 셋 아래 칸 셋씩 · 누른 칸 하나만 폄 · 안 쓰는 칸 흐림.
-  // 칸 = 테두리 칸 안 그림 + 굵은 이름 + 흐린 한 줄, 칸 전체가 덮개 단추 하나(es-t-<칸>). 칸 폭은 칸 수로 셈한다(엔진 Box 에 flexBasis 가 없다)
-  const tileW = Math.max(TILE_MIN, Math.floor((cols - 2 * TILE_GAP) / 3))
+  // 노트: panel.md#toolBoard — 도구판(0.1.26 — 시안 5.1 화면 꼴 넷 ① · 0.1.27 시안 6판): 묶음 머리 셋 아래 칸 셋씩 · 누른 칸 하나만 폄(그 줄 바로 아래 카드) · 안 쓰는 칸 흐림.
+  // 칸 = 테두리 칸 안 그림 + 굵은 이름 + 꺾쇠 + 흐린 한 줄, 칸 전체가 덮개 단추 하나(es-t-<칸>). 칸 폭은 칸 수로 셈한다(엔진 Box 에 flexBasis 가 없다)
+  // 노트: panel.md#toolBoard — 칸 폭은 내림 없이(0.1.27 — 368px · 47칸에서 칸 이름 자리를 한 칸이라도 더 남기려고), 칸 안 옆 여백 0.5칸 · 그림 뒤 사이 0.35칸
+  const tileW = Math.max(TILE_MIN, Math.round(((cols - 2 * TILE_GAP) / 3) * 100) / 100)
+  // 노트: panel.md#toolBoard — 칸 폭: 데스크톱은 칸 수(tileW), 칸 셈이 둘인 표면(fluid — VS Code)은 셋이 줄 폭을 나눠 채움(0% 에서 같이 자람).
+  // 그 표면은 단추 글이 안 줄어(웹뷰 단추 nowrap) 칸마다 최소 폭(min — 칸)을 주고, 셋이 안 들면 줄이 꺾인다
+  const tileSize = (min: number) => (look.fluid ? { width: '0%', flexGrow: 1, flexShrink: 1, minWidth: Math.ceil(min * 10) / 10 } : { width: tileW, flexShrink: 0, minWidth: 0 })
+  const cntCh = (t: Tool) => (t.cnt > 0 ? 0.35 + fluidCh(String(t.cnt)) : 0)
   const tile = (t: Tool) => {
     const isOn = pu.tool === t.k
     const dim = !t.use
+    // 노트: panel.md#appOnly — 데스크톱 앱에서만 되는 칸(0.1.28 결정 1 · 넓은 자리): 흐린 칸 · 꺾쇠 · 덮개 단추 없음(안 눌림) · 아랫줄 「데스크톱 앱에서만」
+    if (t.appOnly) {
+      return (
+        <Box key={`es-t-${t.k}-box`} flexDirection="column" {...tileSize(FLUID_TILE_CH + fluidCh(t.name))} borderStyle="round" borderColor="promptBorderShimmer" paddingX={TILE_PAD_X} paddingY={TILE_PAD_Y}>
+          <Box columnGap={0.35} alignItems="center" minWidth={0}>
+            {t.icon(true) as never}
+            <Box flexShrink={1} minWidth={0}>
+              <Text bold size="footnote" wrap="truncate-end" color="subtle" dimColor>
+                {t.name}
+              </Text>
+            </Box>
+          </Box>
+          <Box minWidth={0}>
+            <Text color="subtle" size="caption" wrap="truncate-end" dimColor>
+              {t.sub}
+            </Text>
+          </Box>
+        </Box>
+      )
+    }
+    // 노트: panel.md#textPress — 덮개를 못 그리는 표면: 칸 이름 · 꺾쇠가 단추(누르는 key 는 데스크톱 덮개와 같은 es-t-<칸>), 수 표는 이름 뒤 주황 수(절대 위치를 안 그림)
+    if (isTextPress(ui)) {
+      const label = `${t.name} ${isOn ? CHEVRON.open : CHEVRON.closed}`
+      return (
+        <Box
+          key={`es-t-${t.k}-box`}
+          flexDirection="column"
+          {...tileSize(FLUID_TILE_CH + fluidCh(label) + FLUID_BUTTON_CH + cntCh(t))}
+          borderStyle="round"
+          borderColor={isOn ? 'suggestion' : dim ? 'promptBorderShimmer' : 'promptBorder'}
+          {...(dim ? {} : { backgroundColor: CARD_BG })}
+          paddingX={TILE_PAD_X}
+          paddingY={TILE_PAD_Y}
+        >
+          <Box columnGap={0.35} alignItems="center" minWidth={0} flexWrap="nowrap">
+            {t.icon(dim) as never}
+            {/* 이름은 label 로도 — 웹뷰는 label 을 안 원소보다 먼저 그린다(엔진이 안 글을 사이 없이 이어 채움 — 「명령›」, 11-19 잼) */}
+            <Button key={`es-t-${t.k}`} dimColor={dim} label={label} onPress={() => acts.tool(t.k)}>
+              <Text bold>{t.name}</Text>
+              {chevron(ui, isOn, dim) as never}
+            </Button>
+            {t.cnt > 0 ? (
+              <Text key={`es-t-${t.k}-cnt`} bold color="warning">
+                {String(t.cnt)}
+              </Text>
+            ) : null}
+          </Box>
+          <Box minWidth={0}>
+            <Text color="subtle" size="caption" wrap="truncate-end" {...(dim ? { dimColor: true } : {})}>
+              {t.sub}
+            </Text>
+          </Box>
+        </Box>
+      )
+    }
     return (
       <Box
         key={`es-t-${t.k}-box`}
@@ -1561,15 +1950,20 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
         borderStyle="round"
         borderColor={isOn ? 'suggestion' : dim ? 'promptBorderShimmer' : 'promptBorder'}
         {...(dim ? {} : { backgroundColor: CARD_BG })}
-        paddingX={0.75}
-        paddingY={0.35}
+        paddingX={TILE_PAD_X}
+        paddingY={TILE_PAD_Y}
       >
-        <Box columnGap={0.5} alignItems="center" minWidth={0}>
+        <Box columnGap={0.35} alignItems="center" minWidth={0}>
           {t.icon(dim)}
           <Box flexShrink={1} minWidth={0}>
             <Text bold size="footnote" wrap="truncate-end" {...(dim ? { color: 'subtle', dimColor: true } : {})}>
               {t.name}
             </Text>
+          </Box>
+          {/* 노트: panel.md#toolBoard — 꺾쇠(0.1.27 시안 6판 2 · 진단 13 T3 「칸이 상태 카드처럼 보임」): 접힘 ›(흐림) · 펼침 ⌄(파랑 — 펼친 칸 테와 같은 suggestion) — 이름 바로 뒤
+              (시안 margin-left −3px). 글자로 둔다 — 그림(Svg)이면 칸마다 약 350자(도구판 아홉 칸 약 3천 자 — 크기 시험이 그리기 선에 닿음) · 칸 이름 자리도 더 줄었다. 이름이 줄어도 꺾쇠는 안 준다 */}
+          <Box key={`es-t-${t.k}-cv`} flexShrink={0} marginLeft={-0.2}>
+            {chevron(ui, isOn, dim)}
           </Box>
         </Box>
         <Box minWidth={0}>
@@ -1592,39 +1986,87 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
       </Box>
     )
   }
-  const board = (list: readonly Tool[]) => (
-    <Box key="es-tools" flexDirection="column" marginTop={0.6} minWidth={0}>
-      {TOOL_GROUPS.map(([g, name], i) => (
-        <Box key={`es-tg-${g}`} flexDirection="column" marginTop={i === 0 ? 0 : 0.5} minWidth={0}>
-          <Box key={`es-tg-h-${g}`} marginBottom={0.25}>
-            <Text bold size="caption" color="subtle">
-              {name}
+  // 노트: panel.md#toolCard — 펼친 카드(0.1.27 시안 6판 1 · 진단 13 T1): 누른 칸이 든 줄 바로 아래, 그 묶음 Box 안. 테 = 누른 칸과 같은 파랑(suggestion) · 바탕 CARD_BG ·
+  // 안 = 덩이(body)마다 줄, 덩이 사이 가는 선. 안 쓰는 칸이면 맨 위 흐린 「이 역할에선 안 씀」(0.1.26 머리 글 그대로). 0.1.26 의 도구판 아래 따로 그리던 편 칸(detail · 머리)은 뺐다
+  const toolCard = (t: Tool) => {
+    const sections = t.body().filter(s => s.some(Boolean))
+    return (
+      <Box key={`es-d-${t.k}`} flexDirection="column" backgroundColor={CARD_BG} borderStyle="round" borderColor="suggestion" paddingX={1} paddingTop={0.2} paddingBottom={0.3} marginTop={CARD_TOP} minWidth={0}>
+        {t.use ? null : (
+          <Box key={`es-dh-${t.k}`} paddingY={0.2} minWidth={0}>
+            <Text color="subtle" size="footnote">
+              이 역할에선 안 씀
             </Text>
           </Box>
-          <Box key={`es-tg-r-${g}`} columnGap={TILE_GAP} minWidth={0}>
-            {list.filter(t => t.g === g).map(tile)}
-          </Box>
-        </Box>
-      ))}
-    </Box>
-  )
-
-  // 노트: panel.md#toolBoard — 편 칸: 가는 선 아래 머리(그림 + 굵은 이름, 안 쓰는 칸이면 「— 이 역할에선 안 씀」) + 칸 안
-  const detail = (t: Tool) => (
-    <Box key={`es-d-${t.k}`} flexDirection="column" marginTop={0.75} minWidth={0}>
-      <Box height={0.06} marginBottom={0.6} backgroundColor="promptBorder" />
-      <Box key={`es-dh-${t.k}`} columnGap={0.5} alignItems="center" minWidth={0}>
-        {t.icon(false)}
-        <Text bold>{t.name}</Text>
-        {t.use ? null : (
-          <Text color="subtle" size="footnote">
-            — 이 역할에선 안 씀
-          </Text>
         )}
+        {sections.flatMap((s, i) => [i > 0 ? <Box key={`es-dl-${t.k}${i}`} height={0.06} backgroundColor="promptBorder" /> : null, ...s])}
       </Box>
-      {t.body()}
-    </Box>
-  )
+    )
+  }
+  // 노트: panel.md#toolBoard — 묶음 = 머리 + 칸 줄 + (그 줄 칸을 폈으면) 카드. 간격은 GROUP_GAP · HEAD_GAP(0.1.27 시안 6판 5)
+  const board = (list: readonly Tool[]) => {
+    const open = list.find(t => t.k === pu.tool) ?? null
+    return (
+      <Box key="es-tools" flexDirection="column" marginTop={0.6} minWidth={0}>
+        {TOOL_GROUPS.map(([g, name], i) => (
+          <Box key={`es-tg-${g}`} flexDirection="column" marginTop={i === 0 ? 0 : GROUP_GAP} minWidth={0}>
+            <Box key={`es-tg-h-${g}`} marginBottom={HEAD_GAP}>
+              <Text bold size="caption" color="subtle">
+                {name}
+              </Text>
+            </Box>
+            <Box key={`es-tg-r-${g}`} columnGap={TILE_GAP} minWidth={0} {...(look.fluid ? { flexWrap: 'wrap' as const, rowGap: FLUID_ROW_GAP } : {})}>
+              {list.filter(t => t.g === g).map(tile)}
+            </Box>
+            {open && open.g === g && !open.appOnly ? toolCard(open) : null}
+          </Box>
+        ))}
+        {/* 노트: panel.md#appOnly — 흐린 칸이 있으면 도구판 아래 까닭 한 줄(0.1.28 결정 1) */}
+        {list.some(t => t.appOnly) ? (
+          <Box key="es-tools-why" marginTop={0.6} minWidth={0}>
+            <Text color="subtle" size="footnote">
+              {APP_ONLY_WHY}
+            </Text>
+          </Box>
+        ) : null}
+      </Box>
+    )
+  }
+
+  // 노트: panel.md#narrowView — 좁은 칸 칸 줄(0.1.28 결정 3): [이름 ›] 지금 값 한 줄 — 누르면 그 줄 바로 아래 펴고(꺾쇠 ˅) 다시 누르면 접는다. 수 표는 줄 끝 주황 수
+  // 노트: panel.md#textUi — 글 화면(터미널)은 줄을 2칸 들이고 단추를 [이름 ›] 꼴로(plain 이 아니면 터미널이 [ ] 를 그린다 — 시안 터미널 그림)
+  const narrowCell = (t: Tool): unknown[] => {
+    const isOn = pu.tool === t.k
+    const sections = isOn ? t.body().filter(s => s.some(Boolean)) : []
+    const lead = look.isText ? { marginLeft: 2 } : {}
+    return [
+      <Box key={`es-n-${t.k}`} columnGap={1} alignItems="center" minWidth={0} {...lead}>
+        <Button key={`es-t-${t.k}`} label={`${t.name} ${isOn ? CHEVRON.open : CHEVRON.closed}`} {...(look.isText ? {} : { plain: true as const })} onPress={() => acts.tool(t.k)} />
+        <Box flexShrink={1} minWidth={0}>
+          <Text color="subtle" wrap="truncate-end" {...(t.use ? {} : { dimColor: true })}>
+            {t.sub}
+          </Text>
+        </Box>
+        {t.cnt > 0 ? (
+          <Text key={`es-n-${t.k}-cnt`} bold color="warning">
+            {String(t.cnt)}
+          </Text>
+        ) : null}
+      </Box>,
+      isOn ? (
+        <Box key={`es-d-${t.k}`} flexDirection="column" marginLeft={look.isText ? 4 : 2} minWidth={0}>
+          {t.use ? null : (
+            <Box key={`es-dh-${t.k}`} minWidth={0}>
+              <Text color="subtle" size="footnote">
+                이 역할에선 안 씀
+              </Text>
+            </Box>
+          )}
+          {sections.flat() as never}
+        </Box>
+      ) : null,
+    ]
+  }
 
   // 노트: panel.md#toolBoard — 칸 아홉(정본 9절 「시안 5.1 확정」 칸 이름 그대로): 흐린 한 줄 · 안 쓰는 칸 · 할 것 수(cnt)
   const toolsOf = (): Tool[] => {
@@ -1636,7 +2078,11 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
     const advIcon = () => (Svg ? <Svg source={advisorCharSvg(QUICK_ROW_PX, 'on', false)} alt="어드바이저" width={advisorCharWidth(QUICK_ROW_PX, 'on')} height={QUICK_ROW_PX} /> : null)
     const b = v.board
     const upId = v.up?.id ?? null
-    const upSent = upId === null ? 0 : v.sent.filter(s => s.to === upId).length
+    // 노트: panel.md#toolBoard — 칸 아랫줄 「보낸 N · 받은 N」(0.1.27 시안 6판 6): 보낸 = 이 세션 앱 메타 peerReceipts 전부(0.1.26 은 최근 12건 안), 받은 = 다른 세션 peerReceipts 가운데
+    // 받는 곳이 이 세션인 것(0.1.26 의 「받은」은 모아 둔 메시지 수였다 — 수 표 cnt 가 그 값을 그대로 센다). 다른 세션 = 위 · 하위 · 형제 밖
+    const near = new Set([...(upId === null ? [] : [upId]), ...kidIds, ...sibIds])
+    const countOf = (m: ReadonlyMap<string, number>, keep: (id: string) => boolean) => [...m].reduce((n, [id, c]) => (keep(id) ? n + c : n), 0)
+    const pair = (keep: (id: string) => boolean) => `보낸 ${countOf(v.sentN, keep)} · 받은 ${countOf(v.recv, keep)}`
     const brdSub = b
       ? b.path === null
         ? '자리 없음'
@@ -1646,51 +2092,142 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
       : v.role === 'solo'
         ? '없음'
         : v.boardHint
-          ? `위 것 · ${v.boardHint.name}`
+          ? `위 세션 것 · ${v.boardHint.name}`
           : '위 진행판 없음'
     const a = v.advisorLog
-    return [
-      { k: 'msg', g: 'msg', name: '위 세션', icon: icon('send'), sub: v.up ? `보낸 ${upSent} · 받은 ${heldUp.length}` : v.role === 'solo' ? '위 없음' : '보고는 사용자에게', use: v.role !== 'solo', cnt: heldUp.length, body: msgBody },
-      { k: 'col', g: 'msg', name: '형제 세션', icon: icon('sitemap'), sub: sibs.length > 0 ? `${sibs.length}개` : '없음', use: sibs.length > 0, cnt: heldSib.length, body: colBody },
-      { k: 'inq', g: 'msg', name: '다른 세션', icon: icon('ask'), sub: `받은 ${heldOther.length} · 보낸 ${inqSent.length}`, use: true, cnt: heldOther.length, body: inqBody },
+    // 노트: panel.md#appOnly — 데스크톱 앱 도구를 못 부르는 세션(0.1.28 — VS Code · 터미널 · 앱 도구 없는 데스크톱): 위 · 형제 · 하위 세션 칸은 앱 몫, 「고정 · 보관」 칸은 「정리 · 끝내기」
+    const off = (t: Tool): Tool => (look.isApp ? t : { ...t, appOnly: true, use: false, sub: APP_ONLY, cnt: 0 })
+    const tools: Tool[] = [
+      off({ k: 'msg', g: 'msg', name: '위 세션', icon: icon('send'), sub: v.up ? pair(id => id === upId) : v.role === 'solo' ? '위 없음' : '보고는 사용자에게', use: v.role !== 'solo', cnt: heldUp.length, body: msgBody }),
+      off({ k: 'col', g: 'msg', name: '형제 세션', icon: icon('sitemap'), sub: sibs.length > 0 ? pair(id => sibIds.has(id)) : '없음', use: sibs.length > 0, cnt: heldSib.length, body: colBody }),
       {
+        k: 'inq',
+        g: 'msg',
+        name: '다른 세션',
+        icon: icon('ask'),
+        // 노트: panel.md#openRows — 데스크톱 앱 도구를 못 부르는 세션은 「열린 N · 받은 N」(시안 그림 — 지금 열린 세션 수)
+        sub: look.isApp ? pair(id => !near.has(id) && id !== v.selfId) : `열린 ${v.openDesk.length + v.openOut.length} · 받은 ${countOf(v.recv, id => id !== v.selfId)}`,
+        use: true,
+        cnt: heldOther.length,
+        body: inqBody,
+      },
+      off({
         k: 'rep',
         g: 'mgmt',
         name: '하위 세션',
         icon: icon('clipboard'),
-        sub: kids.length > 0 ? `${kids.length}개${heldKid.length > 0 ? ` · 모인 ${heldKid.length}` : ''}` : '없음',
+        sub: kids.length > 0 ? `${kids.length}개 · 받은 ${countOf(v.recv, id => kidIds.has(id))}` : '없음',
         use: kids.length > 0,
         cnt: waits.length + heldKid.length,
         body: repBody,
-      },
+      }),
       { k: 'brd', g: 'mgmt', name: '진행판', icon: icon('notebook'), sub: brdSub, use: v.role !== 'solo', cnt: b && b.path !== null ? (b.fresh === null ? 1 : b.fresh.length) : 0, body: brdBody },
       {
         k: 'role',
         g: 'mgmt',
         name: '역할 · 인계',
         icon: icon('transfer', { ...ROLE_LOOK[v.role], px: QUICK_ROW_PX }),
-        sub: [ROLE_NAME[v.role], v.up ? `위 ${fitCells(bareTitle(v.up.title), 10)}` : '위 없음', v.ctxPct !== null ? `${v.ctxPct}%` : null].filter(Boolean).join(' · '),
+        // 노트: panel.md#toolBoard — 아랫줄 = 컨텍스트 %(0.1.27 시안 6판 8 — 인계할 때를 보는 값, 역할 · 위는 바로 위 관계 줄과 같은 값이라 뺌)
+        sub: `컨텍스트 ${v.ctxPct !== null ? `${v.ctxPct}%` : '—'}`,
         use: true,
         cnt: 0,
         body: roleBody,
       },
       { k: 'cmd', g: 'tool', name: '명령', icon: icon('terminal'), sub: 'ultrathink · /btw …', use: true, cnt: 0, body: cmdBody },
       { k: 'adv', g: 'tool', name: '어드바이저', icon: advIcon, sub: a ? `모두 ${a.count}번` : '안 불림', use: true, cnt: 0, body: advBody },
-      { k: 'mgr', g: 'tool', name: '현재 세션', icon: icon('settings'), sub: '고정 · 정리 · 보관', use: true, cnt: 0, body: mgrBody },
+      {
+        k: 'mgr',
+        g: 'tool',
+        name: look.isApp ? TOOL_NAMES.mgr : TOOL_NAMES.mgrOff,
+        icon: icon('settings'),
+        sub: look.isApp ? TOOL_NAMES.mgrSub : TOOL_NAMES.mgrOffSub,
+        use: true,
+        cnt: 0,
+        body: mgrBody,
+      },
     ]
+    return tools
   }
 
-  // 노트: panel.md#selfView — 「세션 도구」 쪽 차례(0.1.26 — 시안 5.1): 제목 · 관계 줄 → 「지금」 줄(할 것이 있을 때만) → 도구판 → 편 칸 하나
+  // 노트: panel.md#selfView — 「세션 도구」 쪽 차례(0.1.26 — 시안 5.1 · 0.1.27): 제목 · 관계 줄 → 「지금」 줄(할 것이 있을 때만) → 도구판(편 칸은 그 묶음 줄 아래 카드)
   const selfView = () => {
     if (!self) return null
-    const list = toolsOf()
-    const open = list.find(t => t.k === pu.tool) ?? null
+    if (look.isNarrow) return narrowView()
+    if (look.isText) return textView()
     return (
       <Box key="es-selfview" flexDirection="column">
         {selfHead()}
         {nowBox()}
-        {board(list)}
-        {open ? detail(open) : null}
+        {board(toolsOf())}
+      </Box>
+    )
+  }
+
+  // 노트: panel.md#narrowView — 좁은 칸(VS Code 입력창 위 inline — 본문 12줄 고정, 0.1.28 결정 3 · 이지 컴팩트 「접어서 한눈에 · 줄마다 지금 값만」 꼴): 줄 1 탭 · 줄 2 제목 · 역할 · 때 한 줄 ·
+  // 줄 3 「지금」(있을 때만, 테 없이) · 칸마다 [이름 ›] 지금 값 한 줄(묶음 머리 없음 · 도구판 차례 그대로). 데스크톱 앱에서만 되는 칸은 뺀다(결정 1). 글만(그림을 뺀 부품 표)
+  // 좁은 칸 · 글 화면의 제목 줄(제목 · 역할 · 때 한 줄)
+  const selfLine = () =>
+    self ? (
+      <Box key="es-self" columnGap={0.5} alignItems="center" minWidth={0}>
+        <Box key="es-self-title" flexShrink={1} minWidth={0}>
+          <Text bold wrap="truncate-end">
+            {bareTitle(self.title)}
+          </Text>
+        </Box>
+        <Box key="es-self-when" flexShrink={0}>
+          <Text color="subtle" size="footnote">{`· ${ROLE_NAME[v.role]} · ${agoText(self.lastAt, v.now)}`}</Text>
+        </Box>
+      </Box>
+    ) : null
+  const narrowView = () => {
+    if (!self) return null
+    const tools = toolsOf().filter(t => !t.appOnly)
+    return (
+      <Box key="es-selfview" flexDirection="column">
+        {selfLine()}
+        {nowBox(true)}
+        <Box key="es-tools-n" flexDirection="column" minWidth={0}>
+          {TOOL_GROUPS.flatMap(([g]) => tools.filter(t => t.g === g).flatMap(narrowCell)) as never}
+        </Box>
+      </Box>
+    )
+  }
+  // 노트: panel.md#textUi — 글 화면(터미널 — 결정 4 · 시안 터미널 그림): 좁은 칸 꼴에 묶음 이름 줄을 두고, 데스크톱 앱에서만 되는 칸은 흐린 줄(이름 · 「데스크톱 앱에서만」 —
+  // 단추 없음, 단추 글 자리에 맞춰 4칸 들임) + 맨 아래 까닭 한 줄(넓은 자리 — 결정 1)
+  const textView = () => {
+    if (!self) return null
+    const tools = toolsOf()
+    const offLine = (t: Tool) => (
+      <Box key={`es-n-${t.k}`} columnGap={1} alignItems="center" minWidth={0} marginLeft={4}>
+        <Text color="subtle" dimColor>
+          {t.name}
+        </Text>
+        <Box flexShrink={1} minWidth={0}>
+          <Text color="subtle" wrap="truncate-end" dimColor>
+            {t.sub}
+          </Text>
+        </Box>
+      </Box>
+    )
+    return (
+      <Box key="es-selfview" flexDirection="column">
+        {selfLine()}
+        {nowBox(true)}
+        <Box key="es-tools-t" flexDirection="column" minWidth={0}>
+          {
+            TOOL_GROUPS.flatMap(([g, name]) => [
+              <Box key={`es-tg-h-${g}`} minWidth={0}>
+                <Text color="subtle">{name}</Text>
+              </Box>,
+              ...tools.filter(t => t.g === g).flatMap(t => (t.appOnly ? [offLine(t)] : narrowCell(t))),
+            ]) as never
+          }
+          {tools.some(t => t.appOnly) ? (
+            <Box key="es-tools-why" minWidth={0}>
+              <Text color="subtle">{APP_ONLY_WHY}</Text>
+            </Box>
+          ) : null}
+        </Box>
       </Box>
     )
   }
@@ -1717,7 +2254,7 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
             ))}
           </Box>
         ) : null}
-        {drawQuickRow(ui, p.q, previewOf(p.acts))}
+        {drawQuickRow(ui, p.q, previewOf(p.acts), look)}
         <Box key="es-set-pv-input" borderStyle="round" borderColor="promptBorder" paddingX={1} justifyContent="center">
           <Text color="subtle">입력창</Text>
         </Box>
@@ -1750,7 +2287,7 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
   const withLines = (el: string, list: unknown[][]): unknown[] => list.flatMap((r, i) => [i > 0 ? rline(`es-set-l-${el}${i}`) : null, ...r])
   // 노트: panel.md#settings — 묶음 = 머리(카드 밖) + 카드(안 내용). 묶음 사이 여백은 이지 컴팩트 appSection 값(약 40px — 그림 도구로 잼)
   const setGroup = (key: string, name: string, icon: QuickIcon, label: string, body: unknown[], help?: Help) => (
-    <Box key={key} flexDirection="column" marginTop={key === 'es-set-quick' ? 0 : SET_GAP}>
+    <Box key={key} flexDirection="column" marginTop={key === 'es-set-quick' ? 0 : look.isText ? 1 : SET_GAP}>
       {head(name, icon, label, help ? { help } : {})}
       {card(`${key}-card`, body)}
     </Box>
@@ -1763,12 +2300,27 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
     </Box>
   )
   // 노트: panel.md#quickRowSet — 「입력창 위 줄에 둘 것」: 줄에 있는 다섯(칸) · 명령 다섯(명령) 두 덩이, 줄마다 이름 · 스위치(오른쪽 끝). 카드 맨 위는 입력창 위 줄 미리보기(previewRow)
-  const quickRow = (it: (typeof QUICK_ITEMS)[number]) =>
-    setRow(`q-${it.key}`, `es-set-q-${it.key}`, it.label, onOff(ui, `${QUICK_SWITCH}${it.key}`, v.settings.quick.has(it.key), on => acts.pickQuick(it.key, on)))
+  // 노트: panel.md#appOnly — 데스크톱 앱에서만 되는 칸(고정 · 전달): 데스크톱 앱 도구를 못 부르는 세션의 넓은 자리는 줄 아래 까닭 한 줄(값은 같이 바뀜), 좁은 칸은 줄을 뺀다
+  const quickRow = (it: (typeof QUICK_ITEMS)[number]): unknown[] => {
+    const isAppOnly = !look.isApp && (it.key === 'pin' || it.key === 'send')
+    if (isAppOnly && look.isNarrow) return []
+    const row = setRow(`q-${it.key}`, `es-set-q-${it.key}`, it.label, onOff(ui, `${QUICK_SWITCH}${it.key}`, v.settings.quick.has(it.key), on => acts.pickQuick(it.key, on), look.hasSwitch))
+    if (!isAppOnly) return row
+    return [
+      ...row,
+      <Box key={`es-set-q-${it.key}-off`} paddingBottom={0.15} minWidth={0}>
+        <Text color="subtle" size="footnote">
+          {APP_ONLY_SET}
+        </Text>
+      </Box>,
+    ]
+  }
+  // 노트: panel.md#narrowView — 좁은 칸 [설정]은 미리보기를 뺀다(0.1.28 ★ 「데스크톱 꼴을 줄여」 — 그림 줄이라 글만인 좁은 칸에 안 맞음)
+  // 노트: panel.md#textUi — 글 화면도 미리보기를 뺀다(시안 터미널 그림 — 겹친 테두리 칸이 패널 본문 아홉 줄을 먹음)
   const quickBody = (): unknown[] => [
-    ...previewRow(),
+    ...(look.isNarrow || look.isText ? [] : previewRow()),
     sub('es-set-sub-cells', '칸', true),
-    ...withLines('c', QUICK_ITEMS.slice(0, 5).map(quickRow)),
+    ...withLines('c', QUICK_ITEMS.slice(0, 5).map(quickRow).filter(r => r.length > 0)),
     sub('es-set-sub-cmds', '명령'),
     ...withLines('m', QUICK_ITEMS.slice(5).map(quickRow)),
   ]
@@ -1785,7 +2337,7 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
       pick
     )
   }
-  const sw = (key: string, isOn: boolean, onSet: (on: boolean) => void) => onOff(ui, key, isOn, onSet)
+  const sw = (key: string, isOn: boolean, onSet: (on: boolean) => void) => onOff(ui, key, isOn, onSet, look.hasSwitch)
   // 노트: panel.md#leftovers — 「정리」 카드의 남은 자료(0.1.6 시안 proposal15 → 0.1.25 [전체]에서 옮김): 이름 · ? · 오른쪽 [휴지통으로](세는 중 · 옮기는 중 · 없음은 그 자리 글),
   // 아래 ▸ 수 · 크기 줄을 누르면 목록(큰 것 셋 · 그 밖 · 뺀 것), [휴지통으로]는 바로 아래 묻는 카드(채운 [휴지통으로] · 글만 [취소])
   const leftovers = (): unknown[] => {
@@ -1874,16 +2426,29 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
           setRow('advisor', 'es-set-advisor-row', 'advisor', advisorPick(), SET_HELP.advisor),
         ]),
       )}
-      {setGroup(
+      {/* 노트: panel.md#appOnly — 「새 자식 세션」 묶음은 데스크톱 앱에서만 일한다(0.1.28 결정 1 · ★ 값은 같이 바뀜): 넓은 자리는 카드 맨 위 까닭 한 줄, 좁은 칸은 묶음을 뺀다 */}
+      {look.isApp || !look.isNarrow ? setGroup(
         'es-set-kids',
         'kids-set',
         'branch',
         '새 자식 세션',
-        withLines('k', [
+        [
+          ...(look.isApp
+            ? []
+            : [
+                <Box key="es-set-kids-off" paddingY={0.15} minWidth={0}>
+                  <Text color="subtle" size="footnote">
+                    {APP_ONLY_SET}
+                  </Text>
+                </Box>,
+              ]),
+          ...withLines('k', [
           setRow('autopin', 'es-set-autopin', '저절로 고정', sw(AUTO_SWITCH.pin, v.settings.autoPin, on => acts.pickAutoPin(on)), SET_HELP.autoPin),
           setRow('autounpin', 'es-set-autounpin', '끝나면 고정 풀기', sw(AUTO_SWITCH.unpin, v.settings.autoUnpin, on => acts.pickAutoUnpin(on)), SET_HELP.autoUnpin),
           setRow('autogroup', 'es-set-autogroup', '사이드바 그룹으로 묶기', sw(AUTO_SWITCH.group, v.settings.autoGroup, on => acts.pickAutoGroup(on)), SET_HELP.autoGroup),
           setRow('autodetach', 'es-set-autodetach', '저절로 떼어 내기', sw(AUTO_SWITCH.detach, v.settings.autoDetach, on => acts.pickAutoDetach(on)), SET_HELP.autoDetach),
+          // 노트: register.md#firstUltra — 첫 글에 ultrathink(0.1.27 — 처음 값 꺼짐 · 같은 묶음 스위치와 같은 길)
+          setRow('firstultra', 'es-set-firstultra', '첫 글에 ultrathink', sw(AUTO_SWITCH.ultra, v.settings.firstUltra, on => acts.pickFirstUltra(on)), SET_HELP.firstUltra),
           setRow(
             'reports',
             'es-set-reports-row',
@@ -1891,10 +2456,20 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
             <Select key="es-set-reports" value={v.settings.reports.value} options={v.settings.reports.options} onSelect={(x: string) => acts.pickReports(x)} />,
             SET_HELP.reports,
           ),
+          ]),
+        ],
+      ) : null}
+      {/* 노트: panel.md#peerRelSet — 「메시지」 묶음: 받는 글 관계 줄 스위치(0.1.20, 처음 값 꺼짐) · 세션 규칙 스위치(0.1.27, 처음 값 켬 — register.md#sendRules) */}
+      {setGroup(
+        'es-set-msg',
+        'msg-set',
+        'message',
+        '메시지',
+        withLines('g', [
+          setRow('peerrel', 'es-set-peerrel', '보낸 세션 관계 알리기', sw(PEER_SWITCH, v.settings.peerRel, on => acts.pickPeerRel(on)), SET_HELP.peerRel),
+          setRow('sessionrules', 'es-set-sessionrules', RULES_NAME, sw(RULES_SWITCH, v.settings.sessionRules, on => acts.pickSessionRules(on)), SET_HELP.sessionRules),
         ]),
       )}
-      {/* 노트: panel.md#peerRelSet — 「메시지」 묶음: 받는 글 관계 줄 스위치(0.1.20, 처음 값 꺼짐) */}
-      {setGroup('es-set-msg', 'msg-set', 'message', '메시지', setRow('peerrel', 'es-set-peerrel', '보낸 세션 관계 알리기', sw(PEER_SWITCH, v.settings.peerRel, on => acts.pickPeerRel(on)), SET_HELP.peerRel))}
       {setGroup('es-set-clean', 'clean-set', 'trash', '정리', leftovers())}
     </Box>
   )
@@ -1914,7 +2489,7 @@ function segRow(ui: Ui, pu: PanelUi, acts: PanelActs) {
   const { Box } = ui
   const isSet = pu.view === 'settings'
   return (
-    <Box key="es-seg" columnGap={1} alignItems="center" marginBottom={0.5}>
+    <Box key="es-seg" columnGap={1} alignItems="center" marginBottom={isTextUi(ui) ? 0 : 0.5}>
       {segButton(ui, 'es-view-self', '세션 도구', !isSet, () => acts.view('self'))}
       {segButton(ui, 'es-view-set', '설정', isSet, () => acts.view('settings'))}
     </Box>
@@ -1975,6 +2550,8 @@ export type QuickActs = {
   isWorking: boolean
   /** [설정] 미리보기(0.1.25) — 고르기(advisor · 화면 · 전달)는 누를 수 없는 칸, 누름은 previewOf 가 빈 동작으로(노트 panel.md#settings) */
   isPreview?: boolean
+  /** 알림 대신 한 줄(VS Code — 0.1.28 결정 9, 노트 panel.md#noteLine) — 패널이 닫혔을 때만 줄 끝에, 없으면 null */
+  note?: string | null
 }
 
 // 노트: panel.md#quickIcons
@@ -2079,6 +2656,19 @@ function quickIconSvg(name: QuickIcon, look: IconLook = {}): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${px}" height="${px}" viewBox="0 0 24 24" fill="${look.fill ? hex : 'none'}" stroke="${hex}"${alpha} stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${QUICK_ICONS[name]}</svg>`
 }
 
+// 노트: panel.md#toolBoard — 도구판 칸 꺾쇠(0.1.27 시안 6판 2): 접힘 › · 펼침 ⌄ 를 글자로 — 접힘 흐림(subtle) · 펼침 파랑(suggestion — 펼친 칸 테와 같은 테마 키).
+// 펼침은 U+2304 「⌄」 대신 U+02C5 「˅」: 시스템 글꼴(Segoe UI)에 ⌄ 가 없어 대체 글꼴로 작고 낮게 「v」처럼 떴다(헤드리스 Edge 로 잼) — ˅ 는 › 와 같은 크기 · 높이.
+// 그림(Svg)으로 그리면 칸마다 약 150 ~ 300자(아홉 칸 1.2 ~ 2.7천 자)라 패널 크기 최악 시험 둘이 그리기 선(8만)에 걸려 안전망이 펼친 본문을 접었다
+const CHEVRON = { closed: '›', open: '˅' } as const
+function chevron(ui: Ui, isOpen: boolean, dim: boolean) {
+  const { Text } = ui
+  return (
+    <Text bold size="footnote" color={isOpen ? 'suggestion' : 'subtle'} {...(dim ? { dimColor: true } : {})}>
+      {isOpen ? CHEVRON.open : CHEVRON.closed}
+    </Text>
+  )
+}
+
 /** 누르지 않는 표지 그림(줄의 고정 · 식음 · 칸 머리) — Svg 가 없는 표면엔 안 그린다. 크기는 look.px(없으면 14px) */
 function mark(ui: Ui, icon: QuickIcon, alt: string, look?: IconLook) {
   const Svg = (ui as unknown as { Svg?: SvgEl }).Svg
@@ -2099,12 +2689,40 @@ type PressOpts = {
   /** 덮개 단추를 안 그린다 — [설정] 미리보기(0.1.25, 누를 것이 없다) */
   noCover?: boolean
   box?: { borderStyle?: string; borderColor?: string; paddingX?: number; paddingY?: number; marginLeft?: number; hover?: { backgroundColor?: string } }
+  /** 글로 누르는 표면(`textPress`)의 단추 이름 — 그림만 든 칸(? 등) · 글 아닌 원소가 든 칸에(없으면 안의 글) */
+  label?: string
+}
+
+// 노트: panel.md#textPress — 덮개 단추 대신: 그림(Svg)은 단추 앞, 글(Text)은 단추 안. 글 아닌 원소(Box 등)가 섞이면 그 글만 모아 단추 이름으로(줄 폭 어림 cover 칸까지)
+function textPressBox(ui: Ui, key: string, o: PressOpts) {
+  const { Box, Button } = ui
+  const parts = o.content.filter(x => x !== null && x !== undefined && x !== false)
+  const rest = parts.filter(x => elType(x) !== 'Svg')
+  // 그림만 든 칸(지금은 도움말 ? 뿐 — 「전달」 칸은 이 표면 줄에 없다)은 그림을 빼고 「?」 단추 하나(그림 ? 옆 ? 단추 겹침을 피함)
+  const icons = rest.length === 0 ? [] : parts.filter(x => elType(x) === 'Svg')
+  const isPlain = rest.length > 0 && rest.every(x => typeof x === 'string' || elType(x) === 'Text')
+  const label = o.label ?? (isPlain ? undefined : fitCells(plainOf(rest), Math.max(4, Math.floor(o.cover))) || '?')
+  return (
+    <Box key={`${key}-box`} columnGap={0.5} alignItems="center" minWidth={0} {...(o.grow ? { flexGrow: 1, flexShrink: 1 } : { flexShrink: 0 })} {...(o.box?.marginLeft !== undefined ? { marginLeft: o.box.marginLeft } : {})}>
+      {icons as never}
+      {o.noCover ? (
+        (rest as never)
+      ) : label === undefined ? (
+        <Button key={key} dimColor={!isTextUi(ui)} onPress={() => void o.onPress()}>
+          {rest as never}
+        </Button>
+      ) : (
+        <Button key={key} dimColor={!isTextUi(ui)} label={label} onPress={() => void o.onPress()} />
+      )}
+    </Box>
+  )
 }
 
 // 노트: panel.md#pressBox — 그림 · 글 묶음 위에 투명 단추를 겹쳐 하나로 누른다(Button 안엔 Svg 가 못 들어간다 — 엔진). 누르는 단추 key = key.
 // 덮개 폭을 셀 수 있는 칸(칩 · ? · 보기)은 keyed Box 한 겹(입력창 위 iconButton 꼴 — 덮개는 내림으로 칸 안에), 줄 남은 폭을 채우는 칸(grow — 요약 줄 ·
 // 세션 관리 머리)만 안쪽 Box 가 넘침을 자른다(덮개가 옆 단추를 덮지 않게). 마우스 올림 줄은 바깥 keyed Box 몫(안쪽에서 자르면 같이 잘린다). 그리기 크기 — 0.1.5 재기
 function pressBox(ui: Ui, key: string, o: PressOpts) {
+  if (isTextPress(ui)) return textPressBox(ui, key, o)
   const { Box, Button, Text } = ui
   const cover = o.noCover ? null : (
     <Box position="absolute" top={0} left={0} right={0} bottom={0} alignItems="stretch">
@@ -2151,7 +2769,17 @@ const ICON_COVER = Math.ceil((QUICK_ROW_PX + 12) / 8.5)
 function iconButton(ui: Ui, key: string, icon: QuickIcon, name: string, onPress: () => void | Promise<void>, look?: IconLook, isStill = false) {
   const { Box, Button, Text } = ui
   const Svg = (ui as unknown as { Svg?: SvgEl }).Svg
-  if (!Svg) return <Button key={key} label={name} onPress={onPress} />
+  // 노트: panel.md#textUi — 그림이 없는 표면: 이름 단추(미리보기는 글만 — 누를 것이 없다)
+  if (!Svg) return isStill ? <Text key={key}>{name}</Text> : <Button key={key} label={name} onPress={onPress} />
+  // 노트: panel.md#textPress — 덮개를 못 그리는 표면: 그림 + 이름 단추(누르는 key 는 데스크톱 덮개와 같은 `<key>-p`)
+  if (isTextPress(ui)) {
+    return (
+      <Box key={key} columnGap={0.5} alignItems="center" flexShrink={0} marginLeft={ROW_LEAD}>
+        {mark(ui, icon, name, { ...ROW_LOOK, ...look }) as never}
+        {isStill ? <Text>{name}</Text> : <Button key={`${key}-p`} dimColor label={name} onPress={onPress} />}
+      </Box>
+    )
+  }
   return (
     <Box key={key} borderStyle="single" borderColor="promptBorder" paddingX={0.5} paddingY={0.4} marginLeft={ROW_LEAD} hover={{ backgroundColor: 'promptBorderShimmer' }}>
       <Svg source={quickIconSvg(icon, { ...ROW_LOOK, ...look })} alt={name} width={QUICK_ROW_PX} height={QUICK_ROW_PX} />
@@ -2176,7 +2804,16 @@ function paneButton(ui: Ui, isShown: boolean, onPress: () => void | Promise<void
   const { Box, Button, Text } = ui
   const Svg = (ui as unknown as { Svg?: SvgEl }).Svg
   const name = isShown ? '세션 패널 닫기' : '세션 패널 열기'
-  if (!Svg) return <Button key="es-q-panel" label={PANE_LABEL} onPress={onPress} />
+  if (!Svg) return isStill ? <Text key="es-q-panel">{PANE_LABEL}</Text> : <Button key="es-q-panel" label={PANE_LABEL} onPress={onPress} />
+  // 노트: panel.md#textPress — 덮개를 못 그리는 표면: 그림 + 「세션 패널」 단추(누르는 key 는 데스크톱 덮개와 같은 es-q-panel-p)
+  if (isTextPress(ui)) {
+    return (
+      <Box key="es-q-panel" columnGap={0.5} alignItems="center" flexShrink={0}>
+        {mark(ui, isShown ? 'panelOpen' : 'panel', name, { hex: 'currentColor', px: QUICK_ROW_PX }) as never}
+        {isStill ? <Text>{PANE_LABEL}</Text> : <Button key="es-q-panel-p" label={PANE_LABEL} onPress={onPress} />}
+      </Box>
+    )
+  }
   return (
     <Box key="es-q-panel" borderStyle="single" borderColor="subtle" columnGap={0.5} alignItems="center" paddingX={0.5} paddingY={0.4} hover={{ backgroundColor: 'promptBorderShimmer' }}>
       <Svg source={quickIconSvg(isShown ? 'panelOpen' : 'panel', { hex: 'currentColor', px: QUICK_ROW_PX })} alt={name} width={QUICK_ROW_PX} height={QUICK_ROW_PX} />
@@ -2196,8 +2833,18 @@ function paneButton(ui: Ui, isShown: boolean, onPress: () => void | Promise<void
 // 노트: panel.md#onOff — 켜고 끄기: 데스크톱은 이지 컴팩트와 같은 스위치(Client switch.tsx — 누름은 register.tsx ui.message 로),
 // Client 가 없는 표면은 켬 · 끔 드롭다운(확정안 I). module 은 이 파일 기준 글자 그대로(엔진이 소스에서 읽는다)
 
-function onOff(ui: Ui, key: string, isOn: boolean, onSet: (on: boolean) => void) {
-  if ('Client' in ui) return <ui.Client key={key} module="./switch.tsx" props={{ on: isOn, disabled: false }} width={5} height={1} />
+function onOff(ui: Ui, key: string, isOn: boolean, onSet: (on: boolean) => void, hasSwitch = true) {
+  // 노트: panel.md#textUi — 글 화면은 [켬] [끔] 단추(고른 쪽 앞 ✓ · key <스위치 key>-on · -off — 결정 4, 터미널 스위치 그리기는 못 잼)
+  if (isTextUi(ui)) {
+    const { Box, Button } = ui
+    return (
+      <Box key={key} columnGap={1} alignItems="center" flexShrink={0}>
+        <Button key={`${key}-on`} label={isOn ? '✓ 켬' : '켬'} onPress={() => onSet(true)} />
+        <Button key={`${key}-off`} label={isOn ? '끔' : '✓ 끔'} onPress={() => onSet(false)} />
+      </Box>
+    )
+  }
+  if (hasSwitch && 'Client' in ui) return <ui.Client key={key} module="./switch.tsx" props={{ on: isOn, disabled: false }} width={5} height={1} />
   const { Select } = ui
   return <Select key={key} value={isOn ? 'on' : 'off'} options={ON_OFF} onSelect={(x: string) => onSet(x === 'on')} />
 }
@@ -2208,6 +2855,8 @@ const SEG_ON_EDGE = 'rgba(128,128,128,0.5)'
 // 노트: panel.md#segButton
 function segButton(ui: Ui, key: string, label: string, isOn: boolean, onPress: () => void | Promise<void>) {
   const { Box, Button } = ui
+  // 노트: panel.md#textUi — 글 화면은 테두리 칸 없이 단추 하나(고른 쪽 앞 ✓ — 테두리 칸이 터미널 세 줄을 먹음)
+  if (isTextUi(ui)) return <Button key={key} label={isOn ? `✓ ${label}` : label} onPress={onPress} />
   if (!isOn) return <Button key={key} label={label} plain dimColor onPress={onPress} />
   return (
     <Box key={`${key}-on`} borderStyle="round" borderColor={SEG_ON_EDGE} paddingX={0} paddingY={0}>
@@ -2219,19 +2868,22 @@ function segButton(ui: Ui, key: string, label: string, isOn: boolean, onPress: (
 // 노트: panel.md#ultraChip — 엔진이 터미널 입력창에서 이 낱말에 칠하는 무지개 키(엔진 순서 그대로)
 const ULTRA_WORD = 'ultrathink'
 const RAINBOW = ['rainbow_red', 'rainbow_orange', 'rainbow_yellow', 'rainbow_green', 'rainbow_blue', 'rainbow_indigo', 'rainbow_violet'] as const
+// 노트: panel.md#ultraChip — 무지개 키를 안 칠하는 표면(VS Code — 0.1.28 결정 9)의 같은 일곱 색: 데스크톱 앱 렌더러가 위 키에 칠하는 값 그대로(차례 같음)
+const RAINBOW_HEX = ['#eb5f57', '#f58b57', '#fac35f', '#91c882', '#82aadc', '#9b82c8', '#c882b4'] as const
 
 // 노트: panel.md#ultraChip — 마우스 올림 한 줄(0.1.7 — 입력창 위 줄 · 패널 칩 같은 글): 앞 마디는 앱 입력창 글
 // 「Sending this word asks for deeper reasoning on this message」의 뜻, 뒤 둘은 하는 일
 const ULTRA_TIP = '더 깊이 추론하게 함 · 입력창 맨 앞에 넣음 · 다시 누르면 뺌'
 
 // 노트: panel.md#ultraChip — 낱말: 평소엔 또렷한 글, 입력창에 넣었으면 글자마다 무지개(0.1.7 부터 두 자리 같음 — 테두리는 늘 같다)
-function ultraWord(ui: Ui, isOn: boolean) {
+function ultraWord(ui: Ui, isOn: boolean, isHex = false) {
   const { Text } = ui
   if (!isOn) return <Text>{ULTRA_WORD}</Text>
+  const colors = isHex ? RAINBOW_HEX : RAINBOW
   return (
     <Text>
       {[...ULTRA_WORD].map((ch, i) => (
-        <Text key={`es-u${i}`} color={RAINBOW[i % RAINBOW.length]}>
+        <Text key={`es-u${i}`} color={colors[i % colors.length]}>
           {ch}
         </Text>
       ))}
@@ -2247,6 +2899,11 @@ const ROW_LEAD = 0.5
 // 이름 · 20% 테두리 · 바탕은 마우스 올림 때만). 높이는 옆 세션 패널 · 고정 칸과 같게 안 여백 위아래 0.4, 마우스 올림 줄은 칸 아래
 function rowChip(ui: Ui, key: string, icon: QuickIcon, label: string, onPress: () => unknown, tip: string, word?: unknown, isStill = false) {
   const { Button, Text } = ui
+  // 노트: panel.md#textUi — 글 화면은 낱말 원소째 단추 안에(터미널은 단추 안 Text 색을 그린다 — ultrathink 무지개 색 키, 결정 9) · 미리보기는 글만
+  if (isTextUi(ui)) {
+    const inner = word ?? <Text>{label}</Text>
+    return isStill ? (inner as never) : <Button key={key} onPress={() => void onPress()}>{inner as never}</Button>
+  }
   if (!(ui as unknown as { Svg?: SvgEl }).Svg) return <Button key={key} label={label} onPress={() => void onPress()} />
   return pressBox(ui, key, {
     content: [mark(ui, icon, label, TEXT_LOOK), word ?? <Text>{label}</Text>],
@@ -2304,6 +2961,15 @@ const LOCKED_TIP = '답이 끝난 뒤 바꿀 수 있습니다'
 // 노트: panel.md#lockedPick
 function lockedPick(ui: Ui, key: string, label: string, value: string, isWarn = false) {
   const { Box, Text } = ui
+  // 노트: panel.md#textUi — 글 화면은 테두리 칸 없이 이름 · 값 글만(테두리 칸이 터미널 세 줄을 먹음)
+  if (isTextUi(ui)) {
+    return (
+      <Box key={key} columnGap={1} alignItems="center">
+        <Text color="subtle">{label}</Text>
+        <Text {...(isWarn ? { color: 'warning' } : { dimColor: true })}>{value}</Text>
+      </Box>
+    )
+  }
   return (
     <Box key={key} columnGap={1} alignItems="center">
       <Text color="subtle">{label}</Text>
@@ -2365,6 +3031,8 @@ function sendCell(ui: Ui, s: SendActs) {
           ? pressBox(ui, 'es-q-send-text', {
               content: [mark(ui, 'send', '입력 글만 바로 보내기', TEXT_LOOK)],
               cover: 3,
+              // 글로 누르는 표면의 단추 이름(textPress 절) — 시안 「➤ 단추」 그대로
+              label: '➤',
               onPress: s.textOnly,
               tip: '입력 글만 바로 보냅니다 · Claude 는 답하지 않습니다',
               tipDown: true,
@@ -2384,9 +3052,14 @@ function sendCell(ui: Ui, s: SendActs) {
 
 // 노트: panel.md#drawQuickRow — 입력창 위 한 줄(세션 패널 · 고정 · ultrathink · 명령 · advisor 묶음 + 숫자 · 전달 · 화면). 0.1.4 부터 세션 패널 말고는 [설정]에서 켠 것만.
 // 0.1.7: ultrathink · 명령은 패널 칩과 같은 칩(`rowChip`), advisor 는 그림 · 드롭다운 한 묶음 + 뒤에 붙인 숫자
-export function drawQuickRow(ui: Ui, q: QuickView, acts: QuickActs) {
+export function drawQuickRow(ui: Ui, q: QuickView, acts: QuickActs, look: PanelLook = DESKTOP_LOOK) {
+  // 노트: panel.md#textUi — 글 화면(터미널)은 그림 · 덮개 · 드롭다운 없이 / panel.md#textPress — 덮개 단추를 못 그리는 표면은 보이는 글이 단추
+  if (look.isText) ui = withTextUi(ui)
+  else if (look.textPress) ui = withTextPress(ui)
   const { Box, Text, Select } = ui
-  const has = (item: QuickItem) => acts.items.has(item)
+  // 노트: panel.md#appOnly — 데스크톱 앱 도구를 못 부르는 세션은 고정 칩(★)과 「전달」 칸(앱 세션만 받는 곳 · 신호가 됨 — 2차 중간 점검)을 안 그린다(입력창 위 줄은 좁은 자리라 뺌)
+  const has = (item: QuickItem) => acts.items.has(item) && ((item !== 'pin' && item !== 'send') || look.isApp)
+  if (!look.isApp && acts.send) acts = { ...acts, send: null }
   const advisor = (
     <Select key="es-q-advisor" label="advisor" value={acts.advisor.value} options={acts.advisor.options} onSelect={v => acts.advisor.pick(v)} />
   )
@@ -2401,9 +3074,15 @@ export function drawQuickRow(ui: Ui, q: QuickView, acts: QuickActs) {
   const lockTip = (what: string) => (acts.isPreview ? `미리보기 — 아래 「${what}」에서 바꿉니다` : LOCKED_TIP)
   return (
     <Box key="es-quick" columnGap={ROW_LEAD} rowGap={0.5} alignItems="center" flexWrap="wrap">
+      {/* 노트: panel.md#textUi — 글 화면은 줄 앞에 흐린 「이지 세션」(시안 터미널 그림 — 띠에 mod 이름이 안 붙는 자리) */}
+      {look.isText ? (
+        <Box key="es-q-name" flexShrink={0}>
+          <Text color="subtle">이지 세션</Text>
+        </Box>
+      ) : null}
       {paneButton(ui, acts.pane.isShown, acts.pane.toggle, isStill)}
       {has('pin') ? iconButton(ui, 'es-q-pin', 'pin', q.self.isStarred ? '고정 풀기' : '고정', acts.pin, q.self.isStarred ? { ...PINNED_LOOK, alpha: undefined } : undefined, isStill) : null}
-      {has('ultra') ? rowChip(ui, 'es-q-ultra', 'brain', ULTRA_WORD, acts.ultrathink, ULTRA_TIP, ultraWord(ui, acts.ultraOn), isStill) : null}
+      {has('ultra') ? rowChip(ui, 'es-q-ultra', 'brain', ULTRA_WORD, acts.ultrathink, ULTRA_TIP, ultraWord(ui, acts.ultraOn, look.rainbowHex), isStill) : null}
       {SELF_CMDS.filter(c => has(c.key)).map(c => rowChip(ui, `es-q-${c.key}`, CMD_ICONS[c.key], c.label, () => cmdPress(c.key), cmdTip(c), undefined, isStill))}
       {has('advisor') ? (
         <Box
@@ -2412,10 +3091,7 @@ export function drawQuickRow(ui: Ui, q: QuickView, acts: QuickActs) {
           alignItems="center"
           flexShrink={0}
           marginLeft={2 * ROW_LEAD}
-          borderStyle={isFable ? 'round' : 'single'}
-          borderColor={isFable ? 'warning' : 'promptBorder'}
-          paddingX={0.5}
-          paddingY={0.1}
+          {...(look.isText ? {} : { borderStyle: isFable ? ('round' as const) : ('single' as const), borderColor: isFable ? 'warning' : 'promptBorder', paddingX: 0.5, paddingY: 0.1 })}
         >
           {mk ? advisorFigure(ui, 'es-q-adv-mark', mk) : null}
           {withTip(
@@ -2441,6 +3117,14 @@ export function drawQuickRow(ui: Ui, q: QuickView, acts: QuickActs) {
           </Box>
         </Box>
       ) : null}
+      {/* 노트: panel.md#noteLine — VS Code 알림 대신 한 줄(0.1.28 결정 9): 패널이 닫혔으면 줄 끝에 */}
+      {acts.note ? (
+        <Box key="es-q-note" marginLeft={ROW_LEAD} flexShrink={1} minWidth={0}>
+          <Text color="subtle" wrap="truncate-end">
+            {acts.note}
+          </Text>
+        </Box>
+      ) : null}
     </Box>
   )
 }
@@ -2461,6 +3145,7 @@ export function previewOf(a: QuickActs): QuickActs {
     display: { ...a.display, pick: () => {} },
     advisor: { ...a.advisor, pick: () => {} },
     send: a.send ? { ...a.send, pick: () => {}, textOnly: NOOP } : null,
+    note: null,
   }
 }
 

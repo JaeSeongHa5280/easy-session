@@ -50,6 +50,8 @@ export type SessionMeta = {
   parent: string | null
   /** spawnedFrom.sessionId — 떼어 내도 남는 원래 부모 */
   from: string | null
+  /** 같은 가족 안 짧은 이름(spawnedFrom.name — start_session 의 name) — 없으면 칸 없음. 노트 meta.md#sendPlace */
+  name?: string
   /** 앱이 맨 위로 옮긴 세션(lineageDetached) */
   detached: boolean
   createdAt: number | null
@@ -66,8 +68,37 @@ export type SessionMeta = {
   receipts: Receipt[]
   /** 앱이 다음 차례에 넘기려고 쌓아 둔 곁가지 보고(앱 메타 queuedSideSessionNotes) — 없으면 칸 없음 */
   queued?: QueuedNote[]
+  /** 앱이 센 끝난 차례 수(completedTurns) — 없으면 칸 없음. 첫 차례 판정(register.md#turnLines) */
+  turnsDone?: number
   oddFields: number
 }
+
+/**
+ * 엔진 세션 등록부 항목 하나 — <설정 폴더>/sessions/<pid>.json(살아 있는 세션만 · 평평 · 엔진이 문서로 약속한 자리 아님). 없거나 꼴이 다른 칸은 null.
+ * entrypoint = claude-desktop · claude-vscode · cli …, hostSessionId = 데스크톱 앱 세션 id(데스크톱만), socket = 메시지 통로(messagingSocketPath). 노트 meta.md#parseRegistryEntry
+ */
+export type RegistryEntry = {
+  pid: number
+  sessionId: string
+  cwd: string | null
+  entrypoint: string | null
+  hostSessionId: string | null
+  name: string | null
+  status: string | null
+  startedAt: number | null
+  updatedAt: number | null
+  socket: string | null
+  kind: string | null
+}
+
+/**
+ * 「다른 세션」 칸의 지금 열린 세션 한 줄(0.1.28 — 등록부 · 데스크톱 앱 세션 기록). id = 그리기 · 보낼 칸 열쇠(데스크톱 세션은 앱 id, 그 밖은 엔진 세션 번호) ·
+ * to = 보낼 주소(엔진 세션 번호 — `{ sessionId }`) · tag = 제목 뒤 표지(메인 · 오케 · 없음) · depth = 데스크톱 나무 깊이 · canGo = [가기](데스크톱 세션만). 노트 meta.md#openRows
+ */
+export type OpenRow = { id: string; to: string; title: string; tag: string | null; depth: number; canGo: boolean }
+
+/** 데스크톱 앱 밖 세션(등록부 — VS Code · 터미널) 한 줄 재료 — tag = 이름표(VS Code · 터미널). 노트 meta.md#openRows */
+export type OutsideEntry = { entry: RegistryEntry; tag: string }
 
 /** 앱 대기 칸의 곁가지 보고 하나 — body 는 앱이 다음 차례 글에 그대로 붙일 글. 노트 meta.md#queuedReports */
 export type QueuedNote = { from: string; at: number; body: string }
@@ -195,7 +226,26 @@ export type PeerSender = { from: string | null; session: string | null; name: st
  * 보낸 세션과 이 세션의 관계(패널 나무 기준) — up 바로 위 · upFar 위쪽이지만 바로 위는 아님(via = 바로 위 세션 제목, isCrown = 보낸 세션이 오케) ·
  * down 아래 · tree 같은 나무의 다른 세션 · other 다른 나무 · unknown 세션 목록에 없음. 노트 meta.md#peerRel
  */
-export type PeerRel = { kind: 'up' | 'down' | 'tree' | 'other'; title: string } | { kind: 'upFar'; title: string; via: string; isCrown: boolean } | { kind: 'unknown' }
+export type PeerRel =
+  | { kind: 'up' | 'down' | 'tree' | 'other'; title: string }
+  | { kind: 'upFar'; title: string; via: string; isCrown: boolean }
+  /** 데스크톱 앱 밖 세션(0.1.28 — 등록부로 풂): surface = VS Code · 터미널 */
+  | { kind: 'outside'; title: string; surface: string }
+  | { kind: 'unknown' }
+
+/**
+ * 보내기 확인(0.1.27 msg 규칙 R1 · R2) — 본 대화 차례 하나의 기록($.state). isHuman = 이 차례에 사람 글(composer · bridge)이 있음 · places = 이 차례에 센 서로 다른 곳 ·
+ * asked = 막고 물으라고 한 곳(사람이 답할 때까지 남음) · ok = 사람이 답해 이 차례에 통과하는 곳 · allow = 사용자가 시킨 보내기(이지 세션이 채운 글 · >> 신호)의 곳. 곳 = 세션 id(못 풀린 곳은 「?」+ 입력 글).
+ * 노트 register.md#sendRules
+ */
+export type RulesTurn = { isHuman: boolean; places: string[]; asked: string[]; ok: string[]; allow: string[] }
+
+/** prompt.submit 이 적어 두고 다음 본 대화 turn.start 가 가져가는 것(그 차례를 시작한 글) — 노트 register.md#sendRules */
+export type RulesPending = { isHuman: boolean; allow: string[] }
+
+/** 받는 곳(0.1.27 msg 규칙) — id = 풀린 앱 세션 id(못 풀면 null), key = 세는 열쇠, title = 까닭 글에 쓸 이름. 노트 meta.md#sendPlace */
+/** alt = 같은 곳의 다른 주소(등록부 항목 — uds: 통로 · 엔진 세션 번호 · 이름, 0.1.28 ⑦) — 시킨 곳 · 물은 곳 맞추기에 */
+export type SendPlace = { id: string | null; key: string; title: string; alt?: string[] }
 
 /** 한 세션의 자식 보고 켬 · 끔 — 그 세션에서 정한 값, 아니면 가장 가까운 위 세션 값(from), 아니면 처음 값 */
 export type ReportState = { on: boolean; isSet: boolean; from: string | null }
@@ -247,6 +297,11 @@ declare module 'claude-code' {
       ultraOn: boolean
       /** 지금 본 대화 차례 글에 ultrathink 낱말이 들어갔는가 — 채팅 작업 줄 글 앞 「ultrathink · 」(0.1.26 — 노트 register.md#ultraSpinner) */
       ultraTurn: boolean
+      /** 보내기 확인(0.1.27) — 지금 본 대화 차례 기록 · 다음 차례를 시작할 글(노트 register.md#sendRules) */
+      rulesTurn: RulesTurn
+      rulesPending: RulesPending | null
+      /** VS Code 알림 대신 한 줄(0.1.28) — 다음에 누를 때까지(노트 register.md#noteLine) */
+      noteLine: string | null
     }
   }
 }

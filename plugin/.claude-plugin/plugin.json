@@ -1,7 +1,7 @@
 {
   "name": "easy-session",
-  "version": "0.1.26",
-  "description": "Easy Session for the Claude desktop app (Code tab): see the sessions that belong with this one, and message, pin, hand over or archive them from one panel.",
+  "version": "0.1.28",
+  "description": "Easy Session for Claude Code in the desktop app (Code tab), VS Code and the terminal: see the sessions that belong with this one, and message, pin, hand over or archive them from one panel.",
   "types": "./types/index.d.ts",
   "author": {
     "name": "JaeSeongHa5280"

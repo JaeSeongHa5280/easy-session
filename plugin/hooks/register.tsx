@@ -9,9 +9,9 @@
  * 🌳 혼자 입력창 위 한 줄을 차지했다(공간 독립, 위치 잘 정하기).
  */
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, FsEntry, Register } from 'claude-code'
+import type { CommandInfo, EngineInterface, FsEntry, Register } from 'claude-code'
 
-import type { AdvisorCall, AdvisorShare, AdvisorUse, BoardFile, CleanScan, ContextInfo, EndRecord, EndedKid, OutItem, RelayFound, RelayMark, RelayPending, HeldBox, HeldReport, NavNode, PanelUi, PlanKind, SessionMeta, StoredPlan, TreeGroup, TreeLinks } from '../types'
+import type { AdvisorCall, AdvisorShare, AdvisorUse, BoardFile, CleanScan, ContextInfo, EndRecord, EndedKid, OpenRow, OutItem, RegistryEntry, RelayFound, RelayMark, RelayPending, HeldBox, HeldReport, NavNode, PanelUi, PlanKind, SessionMeta, StoredPlan, TreeGroup, TreeLinks } from '../types'
 import type { AdvisorPose } from './advisor-char'
 import {
   DROP_REASON,
@@ -59,6 +59,19 @@ import {
   relatives,
   roleOf,
   ultraTyped,
+  withFirstUltra,
+  RULES_EMPTY,
+  filledSendTargets,
+  judgeSend,
+  ruleFailText,
+  sendPlaceOf,
+  LINE_FIRST,
+  hasGrandKids,
+  isLaterOrdinal,
+  isOurFill,
+  isUpWord,
+  roleRuleLine,
+  voiceHints,
   RELAY_MARK_MS,
   RELAY_SLACK_MS,
   receiptState,
@@ -89,18 +102,34 @@ import {
   peerLine,
   peerRelOf,
   peerSenders,
+  engineMeta,
+  isKeyFile,
+  oauthOf,
+  openDeskRows,
+  openOutRows,
+  parseRecvLog,
+  parseRegistryEntry,
+  parseSentLog,
+  peerBodyOf,
+  peerEntryOf,
+  recvLogText,
+  sentLogText,
+  sentRowsOf,
 } from './meta'
-import type { AppFolder, PinWhy, SessionRole } from './meta'
-import { ADV_FOLD, AUTO_SWITCH, COMPOSE_AT, PEER_SWITCH, QUICK_ITEMS, QUICK_SWITCH, SEND_MAIN, SEND_MISS, SEND_NONE, TOOL_START, bareTitle, compactWins, drawFableAsk, drawPanel, drawPanelBare, drawQuickRow, josa, sendPad, shortTitle } from './panel'
-import type { AdvisorLog, AdvisorMark, Choice, FableActs, HeldPick, PanelActs, PanelView, QuickActs, QuickItem, QuickView, SendActs, SlashCmd } from './panel'
+import type { AppFolder, PinWhy, SentItem, SessionRole } from './meta'
+import { ADV_FOLD, AUTO_SWITCH, COMPOSE_AT, DESKTOP_LOOK, PEER_SWITCH, QUICK_ITEMS, RULES_SWITCH, QUICK_SWITCH, SEND_MAIN, SEND_MISS, SEND_NONE, TOOL_START, bareTitle, compactWins, drawFableAsk, drawPanel, drawPanelBare, drawQuickRow, josa, sendPad, shortTitle } from './panel'
+import type { AdvisorLog, AdvisorMark, Choice, FableActs, HeldPick, PanelActs, PanelLook, PanelView, QuickActs, QuickItem, QuickView, SendActs, SlashCmd } from './panel'
 import { installedFrom, pluginDataId, syncedFrom } from './paths'
 import { buildNav, buildTree, findSelf, fitCells, groupOf, paneFollows } from './tree'
 import type { Entry } from './tree'
+import { fillsByFlex, hasVscode, isVscodeEntry, isVscodeSurface, lacksClient, padsPane, paneIsCondensed, pressesText, rainbowAsHex, toastsStack } from './vscode'
 
 const PANE = 'easy-session'
 
 /** $.store 키: 트리 패널을 연 그룹(StoredPane). 같은 그룹 세션만 따라 연다 */
 const PANE_KEY = 'pane'
+// 노트: register.md#ownPane — 엔진 세션은 세션마다 제 열쇠(pane:<엔진 세션 id> = true) — 데스크톱 패널과 따로 여닫는다
+const OWN_PANE_PREFIX = 'pane:'
 
 const nav = atom({ plugin: 'easy-session', key: 'nav' } as const, null)
 
@@ -131,6 +160,13 @@ const mainModel = atom({ plugin: 'easy-session', key: 'mainModel' } as const, nu
 const ultraOn = atom({ plugin: 'easy-session', key: 'ultraOn' } as const, false)
 /** 지금 본 대화 차례 글에 ultrathink 가 들어갔나 — 채팅 작업 줄 글 앞 「ultrathink · 」(0.1.26 — 노트 register.md#ultraSpinner) */
 const ultraTurn = atom({ plugin: 'easy-session', key: 'ultraTurn' } as const, false)
+/** 보내기 확인(0.1.27 msg 규칙 R1 · R2) — 지금 본 대화 차례 기록 · 다음 차례를 시작할 글(노트 register.md#sendRules) */
+const rulesTurn = atom({ plugin: 'easy-session', key: 'rulesTurn' } as const, RULES_EMPTY)
+const rulesPending = atom({ plugin: 'easy-session', key: 'rulesPending' } as const, null)
+// 노트: register.md#noteLine — VS Code 알림 대신 한 줄
+const noteLine = atom({ plugin: 'easy-session', key: 'noteLine' } as const, null)
+// 노트: register.md#noteLine — 이 세션을 마지막으로 그린 표면(입력창 위 · 패널 훅이 적음 — 그리기 전엔 null)
+let drawnSurface: string | null = null
 
 type Ui = ReturnType<EngineInterface['ui']['resolve']>
 
@@ -207,6 +243,95 @@ async function selfAppId($: EngineInterface): Promise<string | null> {
   return id?.startsWith('local_') ? id : null
 }
 
+// 노트: register.md#engineId
+async function engineId($: EngineInterface): Promise<string | null> {
+  return (await $.session.id().catch(() => null)) || null
+}
+
+// 노트: register.md#engineServed — 터미널 표면 이름(0.1.28 ⑥ 결정 4 — 엔진 세션 자리를 여는 둘째 표면)
+const TERMINAL_SURFACE = 'terminal'
+
+// 노트: register.md#engineServed
+async function engineServed($: EngineInterface, surface?: string): Promise<boolean> {
+  if (surface !== undefined) return isVscodeSurface(surface) || surface === TERMINAL_SURFACE
+  const list = await $.session.surfaces().catch(() => null)
+  return list !== null && (hasVscode(list) || list.includes(TERMINAL_SURFACE))
+}
+
+// 노트: register.md#selfKey
+async function selfKey($: EngineInterface, surface?: string): Promise<string | null> {
+  const appId = await selfAppId($)
+  if (appId) return appId
+  return (await engineServed($, surface)) ? engineId($) : null
+}
+
+// 노트: register.md#readRegistry
+const reg = { files: new Map<string, { mtimeMs: number; entry: RegistryEntry }>() }
+
+// 노트: register.md#readRegistry
+async function readRegistry($: EngineInterface): Promise<RegistryEntry[]> {
+  const dir = `${await claudeHome($)}/sessions`
+  const list = await $.fs.list(dir).catch((): FsEntry[] => [])
+  const onDisk = new Map(list.filter(f => f.kind === 'file' && /^\d+\.json$/.test(f.name)).map(f => [f.name, f.mtimeMs]))
+  for (const name of [...reg.files.keys()]) if (!onDisk.has(name)) reg.files.delete(name)
+  for (const [name, mtimeMs] of onDisk) {
+    if (reg.files.get(name)?.mtimeMs === mtimeMs) continue
+    const entry = await $.fs.read(`${dir}/${name}`).then(parseRegistryEntry, () => null)
+    if (entry) reg.files.set(name, { mtimeMs, entry })
+    else reg.files.delete(name)
+  }
+  return [...reg.files.values()].map(f => f.entry)
+}
+
+/** 등록부가 바뀌면 다시 그리게 — 3초 비교(bumpTick)에 붙이는 값(readRegistry 뒤에) */
+function registrySig(): string {
+  return [...reg.files].map(([name, f]) => `|g${name}:${f.mtimeMs}`).join('')
+}
+
+// 노트: register.md#canUseApp
+async function canUseApp($: EngineInterface, s: { isApp: boolean } | null, surface: string | undefined): Promise<boolean> {
+  if (!s?.isApp) return false
+  // 노트: register.md#canUseApp — 앱 세션이 데스크톱 · 모바일에 그려지면 목록 없이 됨. 앱 번호를 이어받아 VS Code · 터미널에 그려질 때만 목록을 본다(2차 중간 점검 ★)
+  if (surface === undefined || (!isVscodeSurface(surface) && surface !== 'terminal')) return true
+  const list = await $.tool.list().catch(() => null)
+  return list === null || list.length === 0 || list.some(t => t.name.startsWith('mcp__ccd_'))
+}
+
+// 노트: register.md#panelLook
+function panelLook(surface: string, placement: string | undefined, isApp: boolean): PanelLook {
+  return {
+    isApp,
+    isNarrow: paneIsCondensed(surface, placement),
+    hasSwitch: !lacksClient(surface),
+    rainbowHex: rainbowAsHex(surface),
+    textPress: pressesText(surface),
+    fluid: fillsByFlex(surface),
+    // 노트: register.md#panelLook — 터미널은 글 화면(0.1.28 ⑥ 결정 4 — panel.md#textUi)
+    isText: surface === TERMINAL_SURFACE,
+  }
+}
+
+// 노트: register.md#sessionSelf
+type SelfView = { selfId: string; metas: Map<string, SessionMeta>; isApp: boolean }
+
+// 노트: register.md#sessionSelf
+async function sessionSelf($: EngineInterface, surface?: string, isAll = false): Promise<SelfView | null> {
+  const appId = await selfAppId($)
+  if (appId) {
+    const metas = await refreshApp($, isAll)
+    return metas.has(appId) ? { selfId: appId, metas, isApp: true } : null
+  }
+  if (!(await engineServed($, surface))) return null
+  const id = await engineId($)
+  if (!id) return null
+  const entry = (await readRegistry($)).find(r => r.sessionId === id) ?? null
+  const cwd = entry?.cwd ? null : await $.session.cwd().catch(() => null)
+  // 노트: register.md#oauthIds — 데스크톱 앱 세션 기록(읽기만 — 0.1.28 결정 2 의 (나)): 이 세션은 그 나무 밖(위 · 아래 없음), 못 찾으면 이 세션 하나(2 의 (가)로 물러섬)
+  const metas = new Map(await refreshApp($).catch(() => new Map<string, SessionMeta>()))
+  metas.set(id, engineMeta(id, entry, cwd))
+  return { selfId: id, metas, isApp: false }
+}
+
 // 노트: register.md#app
 const app = {
   dir: null as string | null,
@@ -217,10 +342,24 @@ const app = {
   ended: new Map<string, { mtimeMs: number; record: EndRecord | null }>(),
 }
 
+// 노트: register.md#oauthIds — 데스크톱 앱 밖 세션(VS Code · 터미널)은 계정 · 조직 env 가 없어 사람의 설정 파일(<홈>/.claude.json · CLAUDE_CONFIG_DIR 면 그 안)에서 읽는다(읽기만)
+async function oauthIds($: EngineInterface): Promise<{ account: string; org: string } | null> {
+  const dir = (await envPath(() => $.env.get('CLAUDE_CONFIG_DIR'))) ?? (await envPath(() => $.env.get('HOME'))) ?? (await envPath(() => $.env.get('USERPROFILE')))
+  if (!dir) return null
+  const text = await $.fs.read(`${dir}/.claude.json`).catch(() => null)
+  return text === null ? null : oauthOf(text)
+}
+
 // 노트: register.md#findAppSessions
 async function findAppSessions($: EngineInterface, selfId: string | null): Promise<string | null> {
-  const account = await $.env.get('CLAUDE_CODE_ACCOUNT_UUID').catch(() => undefined)
-  const org = await $.env.get('CLAUDE_CODE_ORGANIZATION_UUID').catch(() => undefined)
+  let account = await $.env.get('CLAUDE_CODE_ACCOUNT_UUID').catch(() => undefined)
+  let org = await $.env.get('CLAUDE_CODE_ORGANIZATION_UUID').catch(() => undefined)
+  // 노트: register.md#oauthIds — 앱 id 가 없는 세션만(데스크톱 앱 세션은 지금 그대로 env 로)
+  if ((!account || !org) && selfId === null) {
+    const ids = await oauthIds($)
+    account = ids?.account
+    org = ids?.org
+  }
   if (!account || !org) return null
   const found: AppFolder[] = []
   for (const base of await appDataDirs($)) {
@@ -291,7 +430,7 @@ async function refreshApp($: EngineInterface, isAll = false): Promise<Map<string
 async function refreshEnded($: EngineInterface): Promise<Map<string, EndRecord>> {
   const dir = `${await dataDir($)}/sessions`
   const list = await $.fs.list(dir).catch((): FsEntry[] => [])
-  const onDisk = new Map(list.filter(f => f.kind === 'file' && isSessionFile(f.name)).map(f => [idOfFile(f.name), f.mtimeMs]))
+  const onDisk = new Map(list.filter(f => f.kind === 'file' && isKeyFile(f.name)).map(f => [idOfFile(f.name), f.mtimeMs]))
   for (const id of [...app.ended.keys()]) if (!onDisk.has(id)) app.ended.delete(id)
   for (const [id, mtimeMs] of onDisk) {
     if (app.ended.get(id)?.mtimeMs === mtimeMs) continue
@@ -304,7 +443,7 @@ async function refreshEnded($: EngineInterface): Promise<Map<string, EndRecord>>
 
 // 노트: register.md#writeContextReport
 async function writeContextReport($: EngineInterface, model: string | null): Promise<void> {
-  const id = await selfAppId($)
+  const id = await selfKey($)
   if (!id) return
   const usage = await $.session.usage()
   const tokens = usage.context.tokens
@@ -451,7 +590,7 @@ const heldCache = new Map<string, { mtimeMs: number; n: number }>()
 
 async function heldCounts($: EngineInterface): Promise<Map<string, number>> {
   const list = await $.fs.list(`${await dataDir($)}/reports`).catch((): FsEntry[] => [])
-  const onDisk = new Map(list.filter(f => f.kind === 'file' && isSessionFile(f.name)).map(f => [idOfFile(f.name), f.mtimeMs]))
+  const onDisk = new Map(list.filter(f => f.kind === 'file' && isKeyFile(f.name)).map(f => [idOfFile(f.name), f.mtimeMs]))
   for (const id of [...heldCache.keys()]) if (!onDisk.has(id)) heldCache.delete(id)
   for (const [id, mtimeMs] of onDisk) {
     if (heldCache.get(id)?.mtimeMs === mtimeMs) continue
@@ -562,7 +701,10 @@ async function relaySubmit($: EngineInterface, e: { turnId?: string }, text: str
     return null
   }
   const metas = await refreshApp($)
-  const found = findTarget(sig.word, selfId, metas, await storeLinks($))
+  const links = await storeLinks($)
+  // 노트: register.md#voiceHints — `>>위` 는 아직 없는 신호(정본 9절 결정 14): 위 세션이 있으면 보내기 신호로 안 읽고 그 차례 힌트 한 줄(turnLines)이 맡는다
+  if (isUpWord(sig.word) && (await rulesOn($)) && aliveUp(withTree(metas, links), selfId)) return null
+  const found = findTarget(sig.word, selfId, metas, links)
   if ('miss' in found) {
     toast($, `보내지 않습니다 — ${relayMissText(sig.word, found)}`)
     return relayMissContext(sig.word)
@@ -583,8 +725,16 @@ async function peerSubmit($: EngineInterface, origin: unknown, text: string): Pr
   const links = await storeLinks($)
   const tree = withTree(metas, links)
   const lines: string[] = []
+  let entries: RegistryEntry[] | null = null
   for (const s of senders) {
-    const rel = peerRelOf(selfId, peerIdOf(s, metas), tree, links.orche)
+    let rel = peerRelOf(selfId, peerIdOf(s, metas), tree, links.orche)
+    // 노트: register.md#peerRel — 앱 세션 목록에 없는 보낸 쪽은 엔진 세션 등록부로(0.1.28): VS Code · 터미널 세션이면 그 이름표 · 이름으로
+    if (rel?.kind === 'unknown') {
+      entries ??= await readRegistry($)
+      const e = peerEntryOf(s, entries)
+      const tag = e && e.entrypoint !== DESKTOP_ENTRY ? outsideTag(e) : null
+      if (e && tag) rel = { kind: 'outside', title: e.name ?? s.name ?? '제목 없음', surface: tag }
+    }
     if (rel) lines.push(peerLine(rel))
   }
   return lines.length > 0 ? lines.join('\n') : null
@@ -598,8 +748,8 @@ async function relayCard($: EngineInterface, selfId: string, to: string, title: 
 }
 
 /** 끝난 뒤: 알림 + 대화의 답 아래 줄(띠는 안 움직인다) */
-function relayEnd($: EngineInterface, text: string): void {
-  toast($, text)
+function relayEnd($: EngineInterface, text: string, isDone = false): void {
+  toast($, text, isDone)
   log($, text)
 }
 
@@ -638,7 +788,7 @@ async function finishRelay($: EngineInterface, e: { turnId: string; answer: stri
   if (p.way === 'model' && p.modelSent) {
     await mark()
     watchReceipt($, selfId, p.to, p.at, { title, text })
-    return relayEnd($, `Claude 가 「${name}」에 보냈습니다`)
+    return relayEnd($, `Claude 가 「${name}」에 보냈습니다`, true)
   }
   if (e.answer.trim() === '') return relayEnd($, `끝 답에 글이 없어 「${name}」에 보내지 않았습니다`)
   await mark()
@@ -647,13 +797,13 @@ async function finishRelay($: EngineInterface, e: { turnId: string; answer: stri
     const sent = await $.session.send({ to: p.to, text }).catch((err: unknown) => ({ isDelivered: false as const, reason: String(err) }))
     if (sent.isDelivered) {
       watchReceipt($, selfId, p.to, at, { title, text })
-      return relayEnd($, `「${name}」에 끝 답을 보냈습니다`)
+      return relayEnd($, `「${name}」에 끝 답을 보냈습니다`, true)
     }
     await relayCard($, selfId, p.to, title, text)
     return relayEnd($, `「${name}」에 못 보내 그 세션 패널에 넣었습니다 — ${firstLine(sent.reason)}`)
   }
   await relayCard($, selfId, p.to, title, text)
-  relayEnd($, p.way === 'model' ? `Claude 가 보내지 않아 「${name}」 패널에 넣었습니다` : `「${name}」 패널에 넣었습니다. 거기서 수락하면 처리합니다`)
+  relayEnd($, p.way === 'model' ? `Claude 가 보내지 않아 「${name}」 패널에 넣었습니다` : `「${name}」 패널에 넣었습니다. 거기서 수락하면 처리합니다`, p.way !== 'model')
 }
 
 // 노트: meta.md#outbox — 내보낸 칸을 받는 쪽에서 읽는다. 바뀐 파일만. 3초 시계(bumpTick)가 부른다 — 창에 띄운 세션만이라 안 띄웠으면 띄운 뒤 3초 안에
@@ -662,7 +812,7 @@ const outboxSeen = new Map<string, number>()
 async function takeOutboxCards($: EngineInterface, selfId: string): Promise<void> {
   const dir = `${await dataDir($)}/${OUTBOX_DIR}`
   for (const f of await $.fs.list(dir).catch((): FsEntry[] => [])) {
-    if (f.kind !== 'file' || !isSessionFile(f.name)) continue
+    if (f.kind !== 'file' || !isKeyFile(f.name)) continue
     const from = idOfFile(f.name)
     if (from === selfId || outboxSeen.get(from) === f.mtimeMs) continue
     const items = parseOutbox(await $.fs.read(`${dir}/${f.name}`))
@@ -690,10 +840,10 @@ async function relayTextOnly($: EngineInterface): Promise<void> {
     const sent = await $.session.send({ to: found.id, text }).catch((err: unknown) => ({ isDelivered: false as const, reason: String(err) }))
     if (!sent.isDelivered) return toast($, `보내지 못했습니다 — ${firstLine(sent.reason)}`)
     watchReceipt($, s.selfId, found.id, at, { title: s.metas.get(s.selfId)?.title ?? s.selfId, text })
-    relayEnd($, `「${name}」에 글을 보냈습니다`)
+    relayEnd($, `「${name}」에 글을 보냈습니다`, true)
   } else {
     await relayCard($, s.selfId, found.id, s.metas.get(s.selfId)?.title ?? s.selfId, text)
-    relayEnd($, `「${name}」 패널에 넣었습니다. 거기서 수락하면 처리합니다`)
+    relayEnd($, `「${name}」 패널에 넣었습니다. 거기서 수락하면 처리합니다`, true)
   }
   await $.prompt.fill({ text: '', mode: 'replace' }).catch(() => undefined)
   await update($, appTick, n => n + 1)
@@ -766,8 +916,9 @@ async function sendActsOf($: EngineInterface, selfId: string, draft: string): Pr
     const value = keepRow(p.to)
     return { ...base, value, options: rows, state: 'on', canText: null, tip: p.way === 'card' ? `이 차례 끝 답을 「${nameOf(p.to)}」 패널에 넣습니다 · 없음을 고르면 취소` : `이 차례 끝 답을 「${nameOf(p.to)}」로 보냅니다 · 없음을 고르면 취소` }
   }
-  // 슬래시 명령 글은 신호로 안 읽는다(prompt.submit 도 건너뜀)
-  const sig = /^\s*\/\S/.test(draft) ? null : signalOf(draft)
+  // 슬래시 명령 글은 신호로 안 읽는다(prompt.submit 도 건너뜀). `>>위` 도 위 세션이 있으면 신호가 아니다(relaySubmit 과 같음 — register.md#voiceHints)
+  const sig0 = /^\s*\/\S/.test(draft) ? null : signalOf(draft)
+  const sig = sig0 && isUpWord(sig0.word) && (await rulesOn($)) && aliveUp(withTree(metas, links), selfId) ? null : sig0
   if (!sig) return { ...base, value: SEND_NONE, options: rows, state: 'idle', canText: null, tip: `${mainId ? `메인: ${nameOf(mainId)} · ` : ''}다른 세션은 입력창에 >>이름` }
   const found = findTarget(sig.word, selfId, metas, links)
   if ('miss' in found) {
@@ -803,7 +954,7 @@ function pickHeld(items: readonly HeldReport[], keys: HeldPick): HeldReport[] {
 // 노트: register.md#accept — 수락: 이 세션 차례를 연다(사람이 누른 수락이라 사람 말로 — 엔진은 쉴 때 돌린다). keys 가 null 이면 전체.
 // 먼저 지우고 보낸다 — 안 들어가면(막힘 · 던짐) 되돌린다
 async function acceptHeld($: EngineInterface, keys: HeldPick): Promise<void> {
-  const id = await selfAppId($)
+  const id = await selfKey($)
   if (!id) return
   let pick: HeldReport[] = []
   await editHeld($, id, box => {
@@ -822,7 +973,7 @@ async function acceptHeld($: EngineInterface, keys: HeldPick): Promise<void> {
 
 /** 거절: 처리하지 않고 지운다. keys 가 null 이면 전체 삭제, 여럿이면 카드의 전체 삭제(그 보낸 세션 것) */
 async function rejectHeld($: EngineInterface, keys: HeldPick): Promise<void> {
-  const id = await selfAppId($)
+  const id = await selfKey($)
   if (!id) return
   await editHeld($, id, box => {
     const pick = new Set(pickHeld(box.items, keys))
@@ -848,7 +999,7 @@ async function writeBoard($: EngineInterface, id: string, b: BoardFile): Promise
 
 /** 입력 칸에 넣은 경로를 진행판으로 — md 이고 읽혀야 한다. 지금 줄은 모두 본 줄로(새 줄 0) */
 async function boardSet($: EngineInterface, path: string): Promise<void> {
-  const id = await selfAppId($)
+  const id = await selfKey($)
   if (!id) return
   const p = path.trim().replace(/^["']|["']$/g, '')
   if (!/\.md$/i.test(p)) {
@@ -863,12 +1014,12 @@ async function boardSet($: EngineInterface, path: string): Promise<void> {
   await writeBoard($, id, { path: p, seen: boardLines(text).map(boardKey) })
   await update($, panelUi, u => ({ ...u, folds: u.folds.filter(f => f !== 'board-edit') }))
   await update($, appTick, n => n + 1)
-  toast($, `진행판을 ${baseName(p)}${josa(baseName(p), '으로', '로')} 정했습니다`)
+  toast($, `진행판을 ${baseName(p)}${josa(baseName(p), '으로', '로')} 정했습니다`, true)
 }
 
 /** 새 줄을 입력칸에 넣고(보내는 건 사람) 본 줄로 */
 async function boardFill($: EngineInterface): Promise<void> {
-  const id = await selfAppId($)
+  const id = await selfKey($)
   const b = id ? await readBoard($, id) : null
   if (!id || !b) return
   const text = await $.fs.read(b.path).catch(() => null)
@@ -888,7 +1039,7 @@ async function boardFill($: EngineInterface): Promise<void> {
 
 /** 이 세션(오케)이 Edit · Write 로 진행판을 고치면 그 사이 생긴 줄은 본 줄로 — 주인이 쓴 줄이 주인에게 새 줄로 안 뜨게 */
 async function seenOwnEdit<R>($: EngineInterface, filePath: unknown, run: () => Promise<R>): Promise<R> {
-  const id = typeof filePath === 'string' ? await selfAppId($).catch(() => null) : null
+  const id = typeof filePath === 'string' ? await selfKey($).catch(() => null) : null
   const b = id ? await readBoard($, id).catch(() => null) : null
   if (!id || typeof filePath !== 'string') return run()
   // 노트: register.md#sessionClean — 오케 자기 진행판이 아니면 곁가지 끝 줄인지 본다(0.1.6)
@@ -914,9 +1065,9 @@ function drawnSize(tree: unknown): number {
   return JSON.stringify(tree, (_k, v: unknown) => (typeof v === 'function' ? '#'.repeat(40) : v)).length
 }
 
-async function loadPanelView($: EngineInterface, pu: PanelUi): Promise<PanelView | null> {
-  // 패널을 연 세션은 보관 메타까지 한 번 다 읽는다(★16 「보관 N」 — 노트 register.md#refreshApp)
-  const s = await appSelf($, true)
+async function loadPanelView($: EngineInterface, pu: PanelUi, surface?: string): Promise<PanelView | null> {
+  // 패널을 연 세션은 보관 메타까지 한 번 다 읽는다(★16 「보관 N」 — 노트 register.md#refreshApp). 엔진 세션은 등록부로 지은 이 세션 하나(노트 register.md#sessionSelf)
+  const s = await sessionSelf($, surface, true)
   if (!s) return null
   const now = await $.clock.now()
   const ended = await refreshEnded($)
@@ -944,8 +1095,13 @@ async function loadPanelView($: EngineInterface, pu: PanelUi): Promise<PanelView
   const mainId = 'id' in mainHit ? mainHit.id : null
   const rowTitle = (id: string) => tree.get(id)?.title ?? id
   const upMeta = owner !== null ? tree.get(owner) : undefined
-  const up = upMeta && !upMeta.isArchived ? { id: upMeta.id, tag: s.metas.get(s.selfId)?.parent === owner ? '연 세션' : '주인', title: upMeta.title } : null
-  const mainRow = mainId !== null && mainId !== s.selfId && mainId !== up?.id ? { id: mainId, tag: '메인', title: rowTitle(mainId) } : null
+  // 노트: meta.md#treeParents — 나무 ②(0.1.27): 위가 이 세션의 앞 차수(succ:<위> = 이 세션)면 「앞 차수」, 이 세션의 뒤 차수가 아래에 있으면 그 줄에 「뒤 차수」
+  const upTag = owner !== null && links.succ.get(owner) === s.selfId ? '이전 차수' : s.metas.get(s.selfId)?.parent === owner ? '연 세션' : '주인'
+  const up = upMeta && !upMeta.isArchived ? { id: upMeta.id, tag: upTag, title: upMeta.title } : null
+  const heirId = links.succ.get(s.selfId) ?? null
+  const heir = heirId !== null && tree.get(heirId)?.parent === s.selfId ? heirId : null
+  // 노트: register.md#openLists — 엔진 세션은 메인을 데스크톱 세션 줄(표지 「메인」)로 보여 메인 줄을 따로 안 둔다
+  const mainRow = s.isApp && mainId !== null && mainId !== s.selfId && mainId !== up?.id ? { id: mainId, tag: '메인', title: rowTitle(mainId) } : null
   // 보낼 칸을 열었으면 그 세션 식은 값도 — 깨우는 값 카드(값이 없으면 카드 없이 그대로 보낸다 — sendGo 와 같은 값)
   const writingTo = pu.sending?.startsWith(COMPOSE_AT) ? pu.sending.slice(COMPOSE_AT.length) : pu.sending
   if (writingTo && !ctxK.has(writingTo)) {
@@ -960,7 +1116,8 @@ async function loadPanelView($: EngineInterface, pu: PanelUi): Promise<PanelView
   const mainSelf = [...orche].find(id => id !== s.selfId && roleOf(id, tree, orche) === 'main') ?? null
   // 노트: panel.md#roleTool — 「서브로 — 위 고름」(0.1.26): 단독만(오케는 [오케 풀기] 뒤 — 시안의 오케 → 서브는 오케 표시를 같이 끈다), 고를 것은 오케 표시가 있는 세션
   // (메인 포함 · 이 세션 아래 빠짐 — ownerChoices 의 고리 막기)
-  const upPick = role === 'solo' ? { value: links.owners.get(s.selfId) ?? APP_OWNER, choices: ownerChoices(tree, s.selfId, orche).filter(id => orche.has(id)) } : null
+  // 엔진 세션(VS Code)은 데스크톱 세션 밑에 붙이지 않는다(0.1.28 결정 2 의 (다)는 0.1.28 뒤 — 정본 9절)
+  const upPick = s.isApp && role === 'solo' ? { value: links.owners.get(s.selfId) ?? APP_OWNER, choices: ownerChoices(tree, s.selfId, orche).filter(id => orche.has(id)) } : null
   const advisor = await advisorOf($)
   // 노트: register.md#detachAct — 앱은 연 세션이나 그 세션 자신만 뗄 수 있다
   const canDetach = new Set<string>()
@@ -972,11 +1129,31 @@ async function loadPanelView($: EngineInterface, pu: PanelUi): Promise<PanelView
     if (m.parent === s.selfId) opened.add(m.id)
   }
   const selfMeta = s.metas.get(s.selfId)!
+  // 노트: panel.md#toolBoard — 칸 아랫줄 「보낸 N · 받은 N」(0.1.27): 보낸 = 이 세션 앱 메타 peerReceipts 전부, 받은 = 다른 세션 앱 메타 peerReceipts 가운데 받는 곳이 이 세션인 것
+  // (보관 메타까지 읽은 앱 메타 — appSelf(isAll)). 받은 글을 보낸 세션 기록을 못 읽으면(지움 등) 빠진다
+  const sentN = new Map<string, number>()
+  for (const r of selfMeta.receipts) sentN.set(r.to, (sentN.get(r.to) ?? 0) + 1)
+  const recv = new Map<string, number>()
+  for (const m of s.metas.values()) {
+    if (m.id === s.selfId) continue
+    const n = m.receipts.filter(r => r.to === s.selfId).length
+    if (n > 0) recv.set(m.id, n)
+  }
+  // 노트: register.md#engineSend — 엔진 세션은 앱 도착 기록이 없어 이지 세션 기록(sent/ · recv/ — 엔진 세션 번호 열쇠)으로 보낸 · 받은 수와 보낸 글(보냄 · 도착 둘 — 결정 8)
+  const sentLog = s.isApp ? null : await $.fs.read(await sentLogPath($, s.selfId)).then(parseSentLog, (): SentItem[] => [])
+  if (sentLog) for (const x of sentLog) sentN.set(x.to, (sentN.get(x.to) ?? 0) + 1)
+  if (!s.isApp) for (const [id, n] of await $.fs.read(await recvLogPath($, s.selfId)).then(parseRecvLog, () => new Map<string, number>())) recv.set(id, (recv.get(id) ?? 0) + n)
   const usage = await $.session.usage().catch(() => null)
   const tokens = usage?.context.tokens
   const window = usage?.context.window
+  // 노트: register.md#openLists — 「다른 세션」 칸 지금 열린 세션(0.1.28 결정 2 의 (나) · 6)
+  const open = await openLists($, s, tree, orche)
   return {
     selfId: s.selfId,
+    // 노트: register.md#canUseApp — 꼴 값(PanelLook.isApp) 재료
+    isApp: await canUseApp($, s, surface),
+    openDesk: open.desk,
+    openOut: open.out,
     now,
     metas: tree,
     ctxK,
@@ -984,9 +1161,12 @@ async function loadPanelView($: EngineInterface, pu: PanelUi): Promise<PanelView
     role,
     mainTitle: mainSelf ? rowTitle(mainSelf) : null,
     up,
+    heir,
     mainRow,
     opened,
-    sent: recentSent(selfMeta, tree, SENT_ROWS),
+    sent: sentLog ? sentRowsOf(sentLog, SENT_ROWS) : recentSent(selfMeta, tree, SENT_ROWS),
+    sentN,
+    recv,
     ctxPct: typeof tokens === 'number' && typeof window === 'number' && window > 0 ? Math.round((tokens / window) * 100) : null,
     isBypass: selfMeta.mode === 'bypassPermissions',
     upPick,
@@ -995,7 +1175,7 @@ async function loadPanelView($: EngineInterface, pu: PanelUi): Promise<PanelView
     accept: typeof tokens === 'number' && tokens > 0 ? { tokens, isCold: isCold(selfMeta.lastAt, now) } : null,
     board: orche.has(s.selfId) ? await boardView($, s.selfId) : null,
     boardHint: orche.has(s.selfId) ? null : await boardHint($, tree, orche, owner),
-    adopt: orche.has(s.selfId) ? adoptRows(tree, s.selfId, { selfId: s.selfId, now, ended, orche, pinWhy }) : [],
+    adopt: s.isApp && orche.has(s.selfId) ? adoptRows(tree, s.selfId, { selfId: s.selfId, now, ended, orche, pinWhy }) : [],
     settings: {
       quick: await quickItemsOf($),
       display: displayChoice(await displayOf($)),
@@ -1005,8 +1185,10 @@ async function loadPanelView($: EngineInterface, pu: PanelUi): Promise<PanelView
       autoDetach: await autoDetachOn($),
       autoUnpin: await storeOn($, AUTO_UNPIN_KEY),
       autoGroup: await storeOn($, AUTO_GROUP_KEY),
+      firstUltra: await storeOn($, FIRST_ULTRA_KEY),
       reports: { value: (await reportDefault($)) ? 'app' : 'hold', options: REPORT_MODES },
       peerRel: await storeOn($, PEER_REL_KEY),
+      sessionRules: await rulesOn($),
     },
     selfRow: familyRow(tree.get(s.selfId)!, 0, { selfId: s.selfId, now, ended, orche, pinWhy }),
     siblings: near.siblings,
@@ -1024,6 +1206,142 @@ async function loadPanelView($: EngineInterface, pu: PanelUi): Promise<PanelView
     // 노트: panel.md#settings — [설정] 입력창 위 줄 미리보기(0.1.25): 입력창 위 줄과 같은 값 · [설정]을 볼 때만
     quickPreview: pu.view === 'settings' ? { q: { self: selfMeta }, acts: await quickActs($, selfMeta) } : null,
   }
+}
+
+// 노트: register.md#openLists — 등록부 entrypoint(엔진 2.1.325 · 11-19 잼): 데스크톱 앱 · 터미널. VS Code 는 vscode.tsx
+const DESKTOP_ENTRY = 'claude-desktop'
+const TERMINAL_ENTRY = 'cli'
+
+/** 데스크톱 앱 밖 세션 이름표 — VS Code · 터미널, 그 밖 entrypoint(SDK · 헤드리스 …)는 안 보인다(null) */
+function outsideTag(e: RegistryEntry): string | null {
+  if (isVscodeEntry(e.entrypoint)) return 'VS Code'
+  return e.entrypoint === TERMINAL_ENTRY ? '터미널' : null
+}
+
+// 노트: register.md#openLists
+async function openLists($: EngineInterface, s: SelfView, tree: ReadonlyMap<string, SessionMeta>, orche: ReadonlySet<string>): Promise<{ desk: OpenRow[]; out: OpenRow[] }> {
+  const me = s.isApp ? null : s.selfId
+  const entries = (await readRegistry($)).filter(e => e.sessionId !== me && e.hostSessionId !== s.selfId && (e.kind === null || e.kind === 'interactive'))
+  const out = openOutRows(
+    entries.flatMap(entry => {
+      const tag = entry.entrypoint === DESKTOP_ENTRY ? null : outsideTag(entry)
+      return tag ? [{ entry, tag }] : []
+    }),
+  )
+  if (s.isApp) return { desk: [], out }
+  return { desk: openDeskRows(entries.filter(e => e.entrypoint === DESKTOP_ENTRY && (e.hostSessionId?.startsWith('local_') ?? false)), tree, orche), out }
+}
+
+// ── 엔진 세션 보내기 · 받기 기록(0.1.28 결정 5 · 8 — 노트 register.md#engineSend) ──────────────────────────────
+
+/** 받는 곳 줄 id(데스크톱 세션 = 앱 id, 그 밖 = 엔진 세션 번호)로 등록부 항목 찾기 */
+function entryOfRow(entries: readonly RegistryEntry[], id: string): RegistryEntry | null {
+  return entries.find(e => e.sessionId === id || e.hostSessionId === id) ?? null
+}
+
+/** 엔진 SendMessage 의 받는 곳 글(이름 · uds:<통로> · 앱 id · 엔진 세션 번호)로 등록부 항목 찾기 — 못 찾으면 null */
+function entryOfAddress(entries: readonly RegistryEntry[], to: string): RegistryEntry | null {
+  return entries.find(e => (e.socket !== null && to === `uds:${e.socket}`) || to === e.sessionId || to === e.hostSessionId) ?? entries.find(e => e.name === to) ?? null
+}
+
+/** 줄 id — 데스크톱 세션은 앱 id, 그 밖은 엔진 세션 번호 */
+const rowIdOf = (e: RegistryEntry): string => (e.entrypoint === DESKTOP_ENTRY && e.hostSessionId?.startsWith('local_') ? e.hostSessionId : e.sessionId)
+
+async function sentLogPath($: EngineInterface, key: string): Promise<string> {
+  return `${await dataDir($)}/sent/${key}.json`
+}
+
+async function recvLogPath($: EngineInterface, key: string): Promise<string> {
+  return `${await dataDir($)}/recv/${key}.json`
+}
+
+// 노트: register.md#engineSend — 이 세션 파일만 쓴다(세션마다 프로세스가 따로)
+async function noteSent($: EngineInterface, key: string, item: Omit<SentItem, 'at'>): Promise<void> {
+  const path = await sentLogPath($, key)
+  const items = await $.fs.read(path).then(parseSentLog, (): SentItem[] => [])
+  await $.fs.write(path, sentLogText([...items, { ...item, at: await $.clock.now() }]))
+}
+
+// 노트: register.md#engineRecv — 같은 글이 session.receive · prompt.submit 둘로 와도 한 번만(보낸 곳 · 꼬리표 안 본문 앞 200자 · 2분)
+const recvSeen = new Map<string, number>()
+
+// 노트: register.md#engineRecv
+async function noteRecv($: EngineInterface, text: string, origin: unknown): Promise<void> {
+  if (await selfAppId($)) return
+  const key = await selfKey($)
+  if (!key) return
+  const senders = peerSenders(text, origin)
+  if (senders.length === 0) return
+  const now = await $.clock.now()
+  for (const [sig, at] of recvSeen) if (now - at > 120_000) recvSeen.delete(sig)
+  const entries = await readRegistry($)
+  const ids: string[] = []
+  for (const s of senders) {
+    const e = (s.session !== null ? entries.find(x => x.sessionId === s.session) : undefined) ?? (s.from !== null ? entryOfAddress(entries, s.from) : null)
+    const id = e ? rowIdOf(e) : (s.from?.startsWith('local_') ? s.from : null)
+    if (!id) continue
+    const sig = `${id}|${peerBodyOf(text).slice(0, 200)}`
+    if (recvSeen.has(sig)) continue
+    recvSeen.set(sig, now)
+    ids.push(id)
+  }
+  if (ids.length === 0) return
+  const path = await recvLogPath($, key)
+  const counts = await $.fs.read(path).then(parseRecvLog, () => new Map<string, number>())
+  for (const id of ids) counts.set(id, (counts.get(id) ?? 0) + 1)
+  await $.fs.write(path, recvLogText(counts))
+  await update($, appTick, n => n + 1)
+}
+
+// 노트: register.md#engineSend — 엔진 세션 모델의 SendMessage 받는 곳 글을 등록부로 풀어 적는다(못 풀면 안 적음 — 하위 에이전트 · 팀원 이름 등)
+async function noteModelSent($: EngineInterface, to: string): Promise<void> {
+  const key = await selfKey($)
+  if (!key) return
+  const e = entryOfAddress(await readRegistry($), to)
+  if (!e) return
+  const id = rowIdOf(e)
+  await noteSent($, key, { to: id, title: app.files.get(id)?.meta?.title ?? e.name ?? to, delivered: true })
+  await update($, appTick, n => n + 1)
+}
+
+// 노트: register.md#engineSend — 결정 5: 엔진 세션(VS Code)의 [보내기]는 바로 { sessionId } — 닿으면 「보냈습니다」, 못 닿으면 입력칸에 지시 글 + 한 줄.
+// 데스크톱 세션이 데스크톱 앱 밖 세션에 보낼 때는 지금 길(권한 모드로 가름) — 주소만 { sessionId } · 지시 글 주소는 통로. 다른 때(데스크톱 → 데스크톱)는 false
+async function engineSendAct($: EngineInterface, id: string, text: string): Promise<boolean> {
+  const appId = await selfAppId($)
+  const entries = await readRegistry($)
+  const target = entryOfRow(entries, id)
+  if (appId && (target === null || target.entrypoint === DESKTOP_ENTRY)) return false
+  const title = app.files.get(id)?.meta?.title ?? target?.name ?? id
+  const addr = target?.socket ? `uds:${target.socket}` : id
+  const askText = `「${title}」(\`${addr}\`)에 SendMessage 로 보내 주세요:\n\n${text}`
+  const clear = () => update($, panelUi, u => ({ ...u, sending: null, card: null, draft: '' }))
+  if (appId && !(await isBypass($))) {
+    if ((await ask($, askText)) === 'filled') await clear()
+    return true
+  }
+  const sessionId = target?.sessionId ?? (id.startsWith('local_') ? null : id)
+  const sent =
+    sessionId === null
+      ? { isDelivered: false as const, reason: '지금 열린 세션이 아닙니다' }
+      : await $.session.send({ to: { sessionId }, text }).catch((err: unknown) => ({ isDelivered: false as const, reason: String(err) }))
+  if (sent.isDelivered) {
+    const key = appId ? null : await selfKey($)
+    if (key) await noteSent($, key, { to: id, title, delivered: true }).catch(err => log($, `보낸 글 적기 실패 — ${String(err)}`))
+    toast($, `「${shortTitle(title)}」에 보냈습니다`, true)
+    await clear()
+    await redraw($)
+    return true
+  }
+  if (appId) {
+    toast($, `보내지 못했습니다 — ${firstLine(sent.reason ?? '')}`)
+    return true
+  }
+  // 노트: register.md#engineSend — 못 닿음(다른 권한 모드 · 끝난 세션 …): Claude 가 SendMessage 로 보내게 지시 글(보내기 확인 규칙을 지남)
+  if (await fillPrompt($, askText)) {
+    toast($, '바로 못 보내 입력칸에 넣었습니다')
+    await clear()
+  } else toast($, `보내지 못했습니다 — ${firstLine(sent.reason ?? '')}`)
+  return true
 }
 
 /** 오케 「이 세션」 쪽 진행판 칸 — 경로가 없으면 path null(입력 칸), 못 읽으면 fresh null */
@@ -1060,9 +1378,9 @@ function adoptRows(tree: ReadonlyMap<string, SessionMeta>, selfId: string, o: Pa
     .map(m => familyRow(m, 0, o))
 }
 
-async function loadQuickView($: EngineInterface): Promise<QuickView | null> {
-  const s = await appSelf($)
-  return s ? { self: s.metas.get(s.selfId)! } : null
+async function loadQuickView($: EngineInterface, surface?: string): Promise<{ q: QuickView; isApp: boolean } | null> {
+  const s = await sessionSelf($, surface)
+  return s ? { q: { self: s.metas.get(s.selfId)! }, isApp: await canUseApp($, s, surface) } : null
 }
 
 /** 나무 묶음으로 패널을 따라 연다(같은 맨 위 세션 아래 세션끼리 — 떼어 낸 곁가지도 주인 패널을 따라 연다, 0.1.3) — msg 묶음 대신 */
@@ -1150,6 +1468,141 @@ const AUTO_UNPIN_KEY = 'autoUnpin'
 const AUTO_GROUP_KEY = 'autoGroup'
 // 보낸 세션 관계 알리기(0.1.20) — 처음 값 끔(앱 그대로). 노트 register.md#peerRel
 const PEER_REL_KEY = 'peerRel'
+// 새 세션 첫 글에 ultrathink(0.1.27) — 처음 값 끔(storeOn 셈 — 'on' 만 켬). 노트 register.md#firstUltra
+const FIRST_ULTRA_KEY = 'firstUltra'
+// 세션 규칙(0.1.27 — msg 규칙 R1 · R2 · 차례 줄 · 말로 하기 힌트): 처음 값 켬(사용자가 훅으로 하자고 정함) — 'off' 만 끔. 노트 register.md#sendRules
+const SESSION_RULES_KEY = 'sessionRules'
+
+/** 세션 규칙이 켜졌나 — 줄 붙이기 · 그리기에서(못 읽으면 켬으로). 보내기 확인 훅은 던지게 따로 읽는다(닫힌 쪽 — 노트 register.md#sendRules) */
+async function rulesOn($: EngineInterface): Promise<boolean> {
+  return (await $.store.get(SESSION_RULES_KEY).catch(() => undefined)) !== 'off'
+}
+
+/** 세션 규칙 켬 · 끔 저장 — 처음 값이 켬이라 setSwitch(처음 값 끔 셈)를 안 쓴다 */
+async function setRulesOn($: EngineInterface, on: boolean): Promise<void> {
+  if ((await rulesOn($)) === on) return
+  await $.store.set(SESSION_RULES_KEY, on ? 'on' : 'off')
+  await update($, appTick, n => n + 1)
+}
+
+/** 이 mod 자신이 부른 도구인가(플러그인 $.tool.call 의 next.origin) — 이지 세션 자기 보내기는 확인하지 않는다 */
+const isOwnCall = (next: unknown): boolean => /^easy-session(@|$)/.test(String((next as { origin?: { plugin?: unknown } }).origin?.plugin ?? ''))
+
+// 노트: register.md#sendRules — 보내기 확인 훅 몸통(R1 끝난 세션 · R2 3곳째). 검사는 모두 next 앞에서 끝낸다(보낸 뒤 막으면 Claude 가 묻고 다시 보내 두 번 간다).
+// 판정은 상태 갱신 안에서(같은 차례 보내기 여럿이 겹쳐도 셈이 안 엇갈리게)
+async function guardSend($: EngineInterface, raw: unknown, kind: 'send' | 'mcp'): Promise<string | null> {
+  // 스위치는 못 읽으면 던진다 — .catch 가 막는다(열려 버리면 규칙이 없는 것과 같다)
+  if ((await $.store.get(SESSION_RULES_KEY)) === 'off') return null
+  if (typeof raw !== 'string') return null
+  // 보낸 쪽은 데스크톱 앱 세션만(0.1.28 ⑦ — 2차 「보낸 쪽까지 넓히는 것은 짓지 않음」: VS Code · 터미널 세션이 보내면 안 돈다)
+  const selfId = await selfAppId($)
+  if (!selfId) return null
+  const metas = await refreshApp($)
+  // 노트: meta.md#sendPlace — 받는 곳은 등록부로도 푼다(VS Code · 터미널 세션의 uds: 통로 · 엔진 세션 번호 · 이름 — 0.1.28 ⑦)
+  // 등록부를 못 읽으면 빈 목록(짓기 명세 6절) — 여기서 던지면 보내기 확인이 닫혀 평범한 local_ 보내기까지 막힌다
+  const entries = await readRegistry($).catch((): RegistryEntry[] => [])
+  const place = sendPlaceOf(raw, kind, selfId, metas, entries, await engineId($))
+  if (!place) return null
+  const ended = place.id === null ? undefined : (await refreshEnded($)).get(place.id)
+  const isArchived = place.id !== null && (metas.get(place.id)?.isArchived ?? app.archived?.has(place.id) ?? false)
+  // 앞서 보낸 곳 이름 — 앱 제목, 등록부 엔진 세션이면 그 이름
+  const titleOf = (key: string) => metas.get(key)?.title ?? entries.find(e => e.sessionId === key)?.name ?? key.replace(/^\?/, '')
+  let deny: string | null = null
+  await update($, rulesTurn, t => {
+    const r = judgeSend(t, place, { isEnded: ended?.ended === true, isArchived, titleOf })
+    deny = r.deny
+    return r.next
+  })
+  return deny
+}
+
+// 노트: register.md#sendRules — 막는 훅이 던지면(스위치 · 앱 자료 · 상태를 못 읽음) 막는다. next 를 이미 불렀으면(보낸 뒤) 그 결과 그대로
+function guardCatch($: EngineInterface, e: unknown, next: { called: boolean; error: { message?: string } } & ((x: never) => unknown)) {
+  if (next.called) return next(e as never)
+  const why = (next.error?.message ?? '까닭 모름').split('\n')[0]!.slice(0, 80)
+  log($, `보내기 확인 실패 — ${why}`)
+  return { deny: ruleFailText(why) }
+}
+
+// 노트: register.md#sendRules — 차례 기록: 사람 글(composer · bridge)이 차례를 시작하면 앞 차례들에 물은 곳이 이 차례에 통과(ok), 도는 차례에 흡수된 사람 글이면 바로 통과.
+// allow = 사용자가 시킨 보내기의 곳(이지 세션이 채운 [보내기] 글 · 사람이 친 >> 신호 · 「위로 보내」 힌트의 위 세션 — more)
+async function noteTurnOrigin($: EngineInterface, e: { turnId?: string; origin?: { kind: string } }, text: string, more: readonly string[] = []): Promise<void> {
+  const kind = e.origin?.kind
+  const isHuman = kind === 'composer' || kind === 'bridge'
+  const allow = [...filledSendTargets(text), ...(isHuman ? more : [])]
+  if (isHuman) {
+    const selfId = await selfAppId($)
+    const p = selfId ? await readPending($, selfId) : null
+    if (p && (p.turnId === null || p.turnId === (e.turnId ?? null))) allow.push(p.to)
+  }
+  if (e.turnId === undefined) {
+    await update($, rulesPending, () => ({ isHuman, allow }))
+    return
+  }
+  await update($, rulesTurn, t => ({
+    ...t,
+    isHuman: t.isHuman || isHuman,
+    allow: [...new Set([...t.allow, ...allow])],
+    ...(isHuman ? { ok: [...new Set([...t.ok, ...t.asked])], asked: [] } : {}),
+  }))
+}
+
+/** 같은 차례에서 고르기 카드(AskUserQuestion)가 답을 받음 — 물은 곳은 이 차례에 통과 */
+async function humanAnswered($: EngineInterface): Promise<void> {
+  await update($, rulesTurn, t => (t.asked.length === 0 ? t : { ...t, ok: [...new Set([...t.ok, ...t.asked])], asked: [] }))
+}
+
+/** 패널 나무의 위 세션(살아 있는 것) — 관계 줄 「위 · 제목」 · selfRole 과 같은 셈 */
+function aliveUp(tree: ReadonlyMap<string, SessionMeta>, selfId: string): SessionMeta | null {
+  const up = tree.get(selfId)?.parent ?? null
+  const m = up !== null ? tree.get(up) : undefined
+  return m && !m.isArchived ? m : null
+}
+
+// 노트: register.md#turnLines — 첫 차례 = 엔진이 대화 기록에서 센 사람 글 수 0($.session.turns() — 플러그인을 다시 불러와도 그대로)이고
+// 앱이 센 끝난 차례 수 0(completedTurns — 컴팩트로 기록이 줄어도 안 줄어듦). $.state 는 다시 불러오면 비어 안 쓴다
+async function isFirstTurn($: EngineInterface, self: SessionMeta | undefined): Promise<boolean> {
+  if ((await $.session.turns()) !== 0) return false
+  return (self?.turnsDone ?? 0) === 0
+}
+
+/** 줄 하나 셈 — 던지면 그 줄만 뺀다(글은 그대로 간다) */
+function lineOr<T>($: EngineInterface, what: string, f: () => T): T | null {
+  try {
+    return f()
+  } catch (err) {
+    log($, `${what} 실패 — ${String(err)}`)
+    return null
+  }
+}
+
+// 노트: register.md#turnLines — 그 차례 줄 셋(명세 4절: 첫 차례 선언 · 조율자 경계 · 위임 한 단계) · 말로 하기 힌트(5절, register.md#voiceHints).
+// 세션 규칙 스위치 뒤 · 앱 자료 · 나무는 한 번 읽고 · 줄마다 실패하면 그 줄만 뺀다. allow = 힌트로 보내라고 한 위 세션(보내기 확인이 막지 않게)
+async function turnLines($: EngineInterface, kind: string | undefined, text: string): Promise<{ lines: string[]; allow: string[] }> {
+  const isHuman = kind === 'composer' || kind === 'bridge'
+  if ((!isHuman && kind !== 'sdk') || !(await rulesOn($))) return { lines: [], allow: [] }
+  // 노트: register.md#sessionSelf — 엔진 세션은 등록부 이름으로 「N차」를 센다
+  const s = await sessionSelf($)
+  if (!s) return { lines: [], allow: [] }
+  const self = s.metas.get(s.selfId)
+  const lines: string[] = []
+  const allow: string[] = []
+  // 첫 차례 선언 — 사람이 연 세션(composer · bridge) · 다른 세션이 연 세션(sdk)의 첫 글, 제목이 다음 차수(2차 이상)일 때 한 번
+  if (isLaterOrdinal(self?.title) && (await isFirstTurn($, self).catch(err => (log($, `첫 차례 셈 실패 — ${String(err)}`), false)))) lines.push(LINE_FIRST)
+  if (!isHuman) return { lines, allow }
+  const links = await storeLinks($)
+  const tree = withTree(s.metas, links)
+  const role = lineOr($, '조율자 · 위임 줄', () => roleRuleLine({ isLead: ['main', 'orche'].includes(roleOf(s.selfId, tree, links.orche)), hasGrand: hasGrandKids(tree, s.selfId) }))
+  if (role) lines.push(role)
+  // 노트: register.md#turnLines — 엔진 세션(VS Code)은 말로 하기 힌트를 안 붙인다: 인계 · 「열어줘」 힌트가 데스크톱 앱 도구(start_session)를 말해서(0.1.28)
+  if (!isOurFill(text) && s.isApp) {
+    const up = aliveUp(tree, s.selfId)
+    const hints = lineOr($, '말로 하기 힌트', () => voiceHints(text, up ? { id: up.id, title: up.title } : null)) ?? []
+    lines.push(...hints)
+    if (up && hints.some(h => h.includes(`(to = ${up.id})`))) allow.push(up.id)
+  }
+  return { lines, allow }
+}
 
 async function storeOn($: EngineInterface, key: string): Promise<boolean> {
   return (await $.store.get(key).catch(() => undefined)) === 'on'
@@ -1298,11 +1751,14 @@ async function setAdvisor($: EngineInterface, value: string): Promise<void> {
 
 async function runAdvisor($: EngineInterface, value: string): Promise<void> {
   const r = await $.command.run({ command: 'advisor', args: value }).catch((err: unknown) => ({ text: `advisor 를 바꾸지 못했습니다 — ${String(err)}` }))
-  if (r.text) toast($, advisorToast(r.text))
+  if (r.text) toast($, advisorToast(r.text), ADVISOR_SAID.test(r.text))
   await update($, appTick, n => n + 1)
 }
 
 // 노트: register.md#advisor — 엔진 답(영어 두 줄)을 한국어 한 줄로. 모르는 꼴이면 원문 그대로
+// advisor 명령이 바꿨다고 답한 글(advisorToast 가 우리말로 옮기는 둘)
+const ADVISOR_SAID = /Advisor disabled|Advisor set to/i
+
 function advisorToast(text: string): string {
   const set = /Advisor set to ([^\n]+?)\.?\s*(?:\n|$)/i.exec(text)
   const said = /Advisor disabled/i.test(text) ? 'advisor 를 껐습니다' : set ? `advisor 를 ${set[1].trim()} ${josa(set[1].trim(), '으로', '로')} 바꿨습니다` : null
@@ -1334,7 +1790,7 @@ const rankOf = (model: string | null): number | null => (model ? (RANKS.find(([r
 const ADV_MOTION_MS = 3000
 
 async function advisorFile($: EngineInterface): Promise<string | null> {
-  const id = await selfAppId($)
+  const id = await selfKey($)
   return id ? `${await dataDir($)}/advisor/${id}.json` : null
 }
 
@@ -1452,9 +1908,9 @@ async function readAdvisorTimes($: EngineInterface): Promise<void> {
 // 노트: register.md#advisorTimes — 3초 시계가 부른다: 읽을 일이 있고(wants) 패널 「어드바이저」 칸을 펴 두었고 불린 적이 있을 때만. 시계마다 읽지 않는다
 async function kickAdvisorTimes($: EngineInterface): Promise<void> {
   if (!advLog.wants || advLog.running || !(await read($, isOpen))) return
-  // 첫 탭이 아닌 쪽은 [설정]뿐(0.1.25 — 옛 값 'all' 은 첫 탭으로 그린다) · 칸은 「어드바이저」만(0.1.26 — 다른 칸엔 호출 줄이 없다)
+  // 첫 탭이 아닌 쪽은 [설정]뿐(0.1.25 — 옛 값 'all' 은 첫 탭으로 그린다) · 칸은 「어드바이저」를 폈을 때만(0.1.26 — 다른 칸엔 호출 줄이 없다 · 0.1.27 처음 편 칸 없음)
   const pu = await read($, panelUi)
-  if (pu.view === 'settings' || (pu.tool ?? TOOL_START) !== 'adv') return
+  if (pu.view === 'settings' || pu.tool !== 'adv') return
   if (advisorCountOf(await useOf($), await advisorShare($)) <= 0) return
   await readAdvisorTimes($)
 }
@@ -1528,7 +1984,13 @@ async function planOf($: EngineInterface): Promise<PlanKind | null> {
   return v?.kind === 'sub' || v?.kind === 'rate' ? v.kind : null
 }
 
-function toast($: EngineInterface, text: string): void {
+// isDone: 한 일이 됐나(한 줄 앞 ✓ — 0.1.28 사용자 답 「성공 줄에만 ✓」). 데스크톱 알림 글은 그대로
+function toast($: EngineInterface, text: string, isDone = false): void {
+  // 노트: register.md#noteLine — VS Code 는 알림을 안 지우고 카드로 쌓아 입력창 위 칸을 밀어낸다 → 패널 · 입력창 위 줄에 한 줄(다음에 누를 때까지)
+  if (drawnSurface !== null && toastsStack(drawnSurface)) {
+    void update($, noteLine, () => (isDone ? `✓ ${text}` : text)).catch(() => {})
+    return
+  }
   try {
     $.ui.toast(text)
   } catch {
@@ -1573,11 +2035,11 @@ async function ask($: EngineInterface, text: string, said = ''): Promise<AskResu
   if (at >= 0) {
     const next = `${cur.slice(0, at).replace(/\n{1,2}$/, '')}${cur.slice(at + text.length)}`
     const out = await $.prompt.fill({ text: next, mode: 'replace' }).catch(() => ({ isFilled: false }))
-    toast($, `${said}${out.isFilled ? '입력칸에서 뺐습니다' : '입력칸에서 빼지 못했습니다'}`)
+    toast($, `${said}${out.isFilled ? '입력칸에서 뺐습니다' : '입력칸에서 빼지 못했습니다'}`, out.isFilled)
     return out.isFilled ? 'removed' : 'failed'
   }
   const isFilled = await fillPrompt($, text)
-  toast($, `${said}${isFilled ? '입력칸에 넣었습니다 — 보내면 처리합니다 · 다시 누르면 뺍니다' : '입력칸에 넣지 못했습니다'}`)
+  toast($, `${said}${isFilled ? '입력칸에 넣었습니다 — 보내면 처리합니다 · 다시 누르면 뺍니다' : '입력칸에 넣지 못했습니다'}`, isFilled)
   return isFilled ? 'filled' : 'failed'
 }
 
@@ -1592,7 +2054,7 @@ async function appAct(
     return false
   }
   const r = await callApp($, a.server, a.tool, a.args)
-  toast($, `${said}${r.ok ? a.done : `안 됐습니다 — ${firstLine(r.text)}`}`)
+  toast($, `${said}${r.ok ? a.done : `안 됐습니다 — ${firstLine(r.text)}`}`, r.ok)
   return r.ok
 }
 
@@ -1627,7 +2089,7 @@ async function finishAct($: EngineInterface, id: string, on: boolean): Promise<v
   const said = on ? '끝남으로 표시했습니다' : '끝남을 풀었습니다'
   if (on && app.files.get(id)?.meta?.isStarred) await pinAct($, id, false, `${said} · `)
   else {
-    toast($, said)
+    toast($, said, true)
     await redraw($)
   }
 }
@@ -1689,7 +2151,7 @@ async function archiveAct($: EngineInterface, id: string, on: boolean): Promise<
   }
   await update($, panelUi, u => ({ ...u, open: null }))
   const r = await callApp($, 'ccd_session_mgmt', 'archive_session', { session_id: appSid(id, selfId), reason: 'easy-session 패널에서 보관' })
-  toast($, r.ok ? '보관했습니다' : `안 됐습니다 — ${firstLine(r.text)}`)
+  toast($, r.ok ? '보관했습니다' : `안 됐습니다 — ${firstLine(r.text)}`, r.ok)
   await redraw($)
 }
 
@@ -1704,21 +2166,87 @@ async function leaveOldOwner($: EngineInterface, oldId: string, selfId: string):
   return r.ok ? null : `이 세션을 못 떼어 보관하지 않았습니다 — ${firstLine(r.text)}`
 }
 
+// ── 엔진 명령으로 하는 앱 동작(0.1.28 ⑨ — 사용자 11-19 「그냥 눌러도 바로되게」). 노트: register.md#engineCmd ──────────────────
+// 데스크톱 앱 도구를 못 부르는 세션(VS Code · 터미널 엔진 세션 · 앱 번호를 이어받은 그 표면 세션)은 [Remote Control] · [내보내기]를
+// 누를 때 엔진 명령 목록을 보고 그 이름이 있으면 $.command.run(지시 글 없음), 없으면 지금 길. 데스크톱 · 모바일 앱 세션은 지금 길 그대로
+/** 엔진이 Remote Control 이 켜졌을 때 그 명령 설명을 바꿔 다는 글(엔진 2.1.325 코드 — 켜짐을 읽는 길) */
+const RC_ON_DESC = 'Disconnect Remote Control'
+
+// 노트: register.md#engineCmd — 이 세션에서 엔진 명령으로 할 일이면 그 명령, 아니면 null(지금 길)
+async function engineCmdHere($: EngineInterface, id: string, name: string): Promise<CommandInfo | null> {
+  // 그린 표면을 모르면(그리기 전 누름은 없음) 지금 길
+  if (drawnSurface === null) return null
+  const surface = drawnSurface
+  const s = await sessionSelf($, surface).catch(() => null)
+  if (!s || id !== s.selfId || (await canUseApp($, s, surface))) return null
+  const list = await $.command.list().catch((): CommandInfo[] => [])
+  return list.find(c => c.name === name) ?? null
+}
+
+// 노트: register.md#engineCmd — Remote Control 은 엔진 명령 하나가 켜고 끈다(켜졌으면 끔 — 설명이 「Disconnect Remote Control」). 켬 · 끔이 바뀐 것을
+// 목록으로 잴 수 있을 때만 알림(있는 글), 아니면 엔진이 대화에 적는 글(로그인 필요 등)에 맡긴다. 엔진 명령으로 했으면 true
+async function remoteByCommand($: EngineInterface, id: string): Promise<boolean> {
+  const cmd = await engineCmdHere($, id, 'remote-control')
+  if (!cmd) return false
+  const wasOn = cmd.description === RC_ON_DESC
+  const r = await $.command.run({ command: 'remote-control' }).catch((err: unknown) => ({ text: String(err) }))
+  const now = (await $.command.list().catch((): CommandInfo[] => [])).find(c => c.name === 'remote-control')
+  const isOn = now?.description === RC_ON_DESC
+  if (now && isOn !== wasOn) toast($, isOn ? 'Remote Control 을 켰습니다' : 'Remote Control 을 껐습니다', true)
+  else if (r.text) toast($, `안 됐습니다 — ${firstLine(r.text)}`)
+  return true
+}
+
+/** 다운로드 폴더(데스크톱 앱 내보내기와 같은 자리) — 사용자 폴더 아래 Downloads 가 있으면 그 경로, 없으면 null(명령 기본 자리 = 작업 폴더) */
+async function downloadsDir($: EngineInterface): Promise<string | null> {
+  const home = (await envPath(() => $.env.get('USERPROFILE'))) ?? (await envPath(() => $.env.get('HOME')))
+  if (!home) return null
+  const dir = `${home}/Downloads`
+  return (await $.fs.exists(dir).catch(() => false)) ? dir : null
+}
+
+/** 내보낼 파일 이름 — 엔진 /export 의 이름 없는 꼴(conversation-<날짜-시각>.txt) */
+async function exportName($: EngineInterface): Promise<string> {
+  const d = new Date(await $.clock.now())
+  const two = (n: number) => String(n).padStart(2, '0')
+  return `conversation-${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}-${two(d.getHours())}${two(d.getMinutes())}${two(d.getSeconds())}.txt`
+}
+
+// 노트: register.md#engineCmd — 내보내기 = 엔진 /export <경로>(이 대화 글 파일 — 데스크톱 앱 zip 과 다름). ★ 자리 = 다운로드 폴더(있으면), 없으면 작업 폴더.
+// 이름을 주면 고르기 창 없이 바로 쓴다(값 없이 부르면 「복사 · 파일」 고르기 창 — 11-19 잼). 명령은 글을 안 돌려줘 파일이 생겼나로 알린다
+async function exportByCommand($: EngineInterface, id: string): Promise<boolean> {
+  const cmd = await engineCmdHere($, id, 'export')
+  if (!cmd) return false
+  const dir = await downloadsDir($)
+  const name = await exportName($)
+  const cwd = dir ? null : ((await $.session.cwd().catch(() => null)) ?? null)
+  const path = dir ? `${dir}/${name}` : cwd ? `${cwd.replace(/\\/g, '/')}/${name}` : name
+  const r = await $.command.run({ command: 'export', args: path }).catch((err: unknown) => ({ text: String(err) }))
+  const isSaved = await $.fs.exists(path).catch(() => false)
+  if (isSaved) toast($, dir ? `다운로드 폴더에 저장했습니다 · ${name}` : path, true)
+  else toast($, r.text ? `안 됐습니다 — ${firstLine(r.text)}` : '안 됐습니다')
+  return true
+}
+
 async function remoteOffAct($: EngineInterface, id: string): Promise<void> {
+  // 노트: register.md#engineCmd — 엔진 명령이 켜고 끄기를 같이 한다
+  if (await remoteByCommand($, id)) return
   const selfId = await selfAppId($)
   const n = askName(id, selfId)
   await appAct($, {
-    ask: `${n.name}의 원격 연결을 꺼 주세요.`,
+    ask: `${n.name}의 Remote Control 을 꺼 주세요.`,
     server: 'ccd_session_mgmt',
     tool: 'set_remote_control',
     args: { session_id: appSid(id, selfId), enabled: false },
-    done: '원격을 껐습니다',
+    done: 'Remote Control 을 껐습니다',
   })
   await update($, panelUi, u => ({ ...u, remote: null }))
 }
 
 /** 내보내기 — 앱 세션 메뉴 Export 와 같다(앱 도구 export_transcript: 다운로드 폴더에 zip, 한 시간 6번까지) */
 async function exportAct($: EngineInterface, id: string): Promise<void> {
+  // 노트: register.md#engineCmd — 데스크톱 앱 도구를 못 부르는 세션은 엔진 /export(있을 때)
+  if (await exportByCommand($, id)) return
   const selfId = await selfAppId($)
   const n = askName(id, selfId)
   if (!(await isBypass($))) {
@@ -1727,7 +2255,7 @@ async function exportAct($: EngineInterface, id: string): Promise<void> {
   }
   const r = await callApp($, 'ccd_session_mgmt', 'export_transcript', { session_id: appSid(id, selfId) })
   const file = /[^\\/\s"']+\.zip/i.exec(r.text)?.[0]
-  toast($, r.ok ? `다운로드 폴더에 저장했습니다${file ? ` · ${file}` : ''}` : `안 됐습니다 — ${firstLine(r.text)}`)
+  toast($, r.ok ? `다운로드 폴더에 저장했습니다${file ? ` · ${file}` : ''}` : `안 됐습니다 — ${firstLine(r.text)}`, r.ok)
 }
 
 /** ⋯ 메뉴를 열 때 · 「이 세션」 쪽을 볼 때 그 세션 원격이 켜졌나 본다 — 켜졌을 때만 「원격 끄기」(정본 9절 정함 6). 못 읽으면 안 띄운다 */
@@ -1740,6 +2268,8 @@ async function checkRemote($: EngineInterface, id: string): Promise<void> {
 
 /** 보내기 — bypass 면 앱 세션 채널로 바로(보관된 세션은 풀고 — 정본 11절 ★9), 아니면 SendMessage 지시 글 */
 async function sendAct($: EngineInterface, id: string, text: string): Promise<void> {
+  // 노트: register.md#engineSend — 엔진 세션이 보내거나 데스크톱 앱 밖 세션에 보낼 때(0.1.28). 데스크톱 → 데스크톱은 아래 지금 길
+  if (await engineSendAct($, id, text)) return
   const selfId = await selfAppId($)
   const meta = (await refreshApp($)).get(id)
   const n = askName(id, selfId)
@@ -1760,7 +2290,7 @@ async function sendAct($: EngineInterface, id: string, text: string): Promise<vo
     toast($, `보내지 못했습니다 — ${firstLine(sent.reason)}`)
     return
   }
-  toast($, `「${shortTitle(meta?.title ?? id)}」에 보냈습니다`)
+  toast($, `「${shortTitle(meta?.title ?? id)}」에 보냈습니다`, true)
   await clear()
   await redraw($)
 }
@@ -1823,7 +2353,7 @@ async function takeOver($: EngineInterface, oldId: string, kid: Kid, bypass: boo
     if (c.ok) await setPinWhy($, oldId, null)
   }
   const name = shortTitle(kid.title ?? kid.id)
-  toast($, callerId === oldId ? `인계: 「${name}」${josa(name, '이', '가')} 이 세션 자리를 이어받았습니다${pin}` : `인계: 이 세션이 앞 차수 자리를 이어받았습니다${pin}`)
+  toast($, callerId === oldId ? `인계: 「${name}」${josa(name, '이', '가')} 이 세션 자리를 이어받았습니다${pin}` : `인계: 이 세션이 앞 차수 자리를 이어받았습니다${pin}`, true)
   await update($, appTick, n => n + 1)
 }
 
@@ -2045,7 +2575,7 @@ async function endSelf($: EngineInterface, selfId: string, summary: string): Pro
       said += ' · 저절로 붙인 고정을 풀었습니다'
     }
   }
-  toast($, said)
+  toast($, said, true)
   await update($, appTick, n => n + 1)
 }
 
@@ -2069,7 +2599,7 @@ const CLEAN_TOP = [
 
 /** 이 세션 역할(패널 나무 · 오케 표시로 — meta.md#roleOf) */
 async function selfRole($: EngineInterface): Promise<{ selfId: string; role: SessionRole; up: string | null; tree: Map<string, SessionMeta> } | null> {
-  const s = await appSelf($)
+  const s = await sessionSelf($)
   if (!s) return null
   const links = await storeLinks($)
   const tree = withTree(s.metas, links)
@@ -2079,7 +2609,7 @@ async function selfRole($: EngineInterface): Promise<{ selfId: string; role: Ses
 
 /** 세션 관리 [정리] = 이 세션 입력칸에 정리 글(메인 · 오케면 앞에 세 줄), 하위 줄 ⋯ 「정리 부탁」 = 그 세션에 보낼 칸을 정리 글로 채워 연다(보내기 · 깨우는 값 카드는 보내기 그대로) */
 async function cleanAct($: EngineInterface, id: string): Promise<AskResult | null> {
-  if (id === (await selfAppId($))) {
+  if (id === (await selfKey($))) {
     const r = await selfRole($)
     const [head, ...rest] = CLEAN_ASK.split('\n')
     return ask($, r && (r.role === 'main' || r.role === 'orche') ? [head, ...CLEAN_TOP, ...rest].join('\n') : CLEAN_ASK)
@@ -2153,6 +2683,8 @@ async function titleTidyAct($: EngineInterface): Promise<void> {
 
 /** Remote Control 켜기(0.1.26 — 「현재 세션」 칸, 끄기와 같은 길) */
 async function remoteOnAct($: EngineInterface, id: string): Promise<void> {
+  // 노트: register.md#engineCmd — 데스크톱 앱 도구를 못 부르는 세션은 엔진 /remote-control(있을 때 — ★ 단추 꼴은 지금대로 켜기 하나)
+  if (await remoteByCommand($, id)) return
   const selfId = await selfAppId($)
   const n = askName(id, selfId)
   const ok = await appAct($, {
@@ -2195,7 +2727,7 @@ async function archiveAllAct($: EngineInterface, ids: readonly string[]): Promis
     else failed++
   }
   await update($, panelUi, u => ({ ...u, open: null }))
-  toast($, `끝남 ${ids.length} 가운데 ${done} 보관${skipped > 0 ? ` · 화면에 열려 있어 건너뜀 ${skipped}` : ''}${failed > 0 ? ` · 못 함 ${failed}` : ''}`)
+  toast($, `끝남 ${ids.length} 가운데 ${done} 보관${skipped > 0 ? ` · 화면에 열려 있어 건너뜀 ${skipped}` : ''}${failed > 0 ? ` · 못 함 ${failed}` : ''}`, done > 0 && failed === 0)
   await redraw($)
 }
 
@@ -2257,7 +2789,7 @@ async function recycleScratch($: EngineInterface): Promise<void> {
           ? '휴지통 옮기기는 Windows 에서만 됩니다'
           : '휴지통 설정을 못 읽었습니다'
   if (refused) toast($, `휴지통으로 옮기지 않았습니다 — ${why}`)
-  else if (done) toast($, `휴지통으로 옮겼습니다 — ${done[1]}개${Number(done[2]) > 0 ? ` · 못 옮긴 것 ${done[2]}개(쓰는 중일 수 있음)` : ''}`)
+  else if (done) toast($, `휴지통으로 옮겼습니다 — ${done[1]}개${Number(done[2]) > 0 ? ` · 못 옮긴 것 ${done[2]}개(쓰는 중일 수 있음)` : ''}`, Number(done[2]) === 0)
   else toast($, `휴지통으로 옮기지 못했습니다 — ${firstLine(out || String(ran.stderr ?? ''))}`)
   cleanScan = { ...cleanScan!, moving: false }
   await scanScratch($)
@@ -2309,7 +2841,7 @@ async function setOwnerAct($: EngineInterface, id: string, value: string): Promi
   if (value === APP_OWNER) await $.store.delete(key)
   else if (value === TOP) await $.store.set(key, TOP)
   else {
-    const s = await appSelf($)
+    const s = await sessionSelf($)
     const tree = s ? withTree(s.metas, await storeLinks($)) : new Map<string, SessionMeta>()
     if (value === id || subtreeOf(tree, id).has(value)) {
       toast($, '고리가 생겨 주인을 안 바꿨습니다')
@@ -2322,11 +2854,11 @@ async function setOwnerAct($: EngineInterface, id: string, value: string): Promi
 }
 
 async function adoptAct($: EngineInterface, id: string): Promise<void> {
-  const selfId = await selfAppId($)
+  const selfId = await selfKey($)
   if (!selfId) return
   if (await setOwnerAct($, id, selfId)) {
     await groupTree($, selfId, [id])
-    toast($, `「${shortTitle(app.files.get(id)?.meta?.title ?? id)}」${josa(shortTitle(app.files.get(id)?.meta?.title ?? id), '을', '를')} 이 세션 밑으로 붙였습니다`)
+    toast($, `「${shortTitle(app.files.get(id)?.meta?.title ?? id)}」${josa(shortTitle(app.files.get(id)?.meta?.title ?? id), '을', '를')} 이 세션 밑으로 붙였습니다`, true)
   }
 }
 
@@ -2343,13 +2875,13 @@ async function orcheAct($: EngineInterface, id: string, on: boolean): Promise<vo
 const HANDOFF_ASK = [
   '이 세션을 인계해 주세요(easy-session 「인계」 단추).',
   '① 정본 맨 위 「지금 상태」 · 「인계」를 지금대로 고치고 커밋합니다.',
-  '② 채팅에 새 세션 카드를 띄웁니다 — start_session(initiation "offer"), 제목은 이 세션의 다음 차수 「[범위] 원래 제목 N+1차 — 다음 묶음」. 사용자가 새 세션을 고르면 할 일은 정본 맨 위부터 읽고 잇기로 씁니다.',
+  '② 채팅에 새 세션 카드를 띄웁니다 — start_session(initiation "offer"), 제목은 이 세션의 다음 차수 「[범위] 원래 제목 N+1차 — 다음 묶음」. 사용자가 새 세션을 고르면 할 일은 정본 맨 위부터 읽고 잇기로 쓰되, 첫 차례는 인계 자료만 읽고 「나 · 연결」(무엇을 하는 세션인지 한 줄 · 도는 세션 · 끝난 세션)을 보고한 뒤 사용자 말을 기다린다고 씁니다.',
   '③ 나무는 easy-session 이 넘깁니다 — 제목이 다음 차수면 새 세션 고정 · 이 세션 고정 풀기 · 곁가지 · 오케 표시 · 진행판.',
   '④ 이 세션 보관은 사용자 말 뒤에 합니다. 사이드바에서 보관하면 붙은 새 세션까지 같이 보관되니, 이 세션 패널 [보관]이나 Claude 에게 말로 합니다(붙은 세션을 먼저 떼어 남깁니다).',
 ].join('\n')
 
 async function handoffAct($: EngineInterface): Promise<void> {
-  if (await selfAppId($)) await ask($, HANDOFF_ASK)
+  if (await selfKey($)) await ask($, HANDOFF_ASK)
 }
 
 async function goApp($: EngineInterface, id: string): Promise<void> {
@@ -2368,6 +2900,13 @@ async function sendGo($: EngineInterface, id: string, text: string): Promise<voi
   else await sendAct($, id, text)
 }
 
+// 노트: register.md#toolPick — 칸을 펼 때 한 번: 「고정 · 보관」(mgr)은 이 세션 원격이 켜졌나 앱에 묻고, 「어드바이저」는 불린 적이 있으면 기록을 바로 읽는다
+async function afterToolOpen($: EngineInterface, k: string): Promise<void> {
+  const id = await selfAppId($)
+  if (k === 'mgr' && id) await checkRemote($, id)
+  if (k === 'adv' && advisorCountOf(await useOf($), await advisorShare($)) > 0) await readAdvisorTimes($)
+}
+
 // 노트: register.md#sizeGuard — 접힘 열고 닫기: 누른 것만 바꾼다. 한 번에 하나만 남기는 것은 메시지 본문(held: — 크기)
 function toggleFold(folds: readonly string[], key: string): string[] {
   if (folds.includes(key)) return folds.filter(f => f !== key)
@@ -2383,15 +2922,28 @@ function panelActs($: EngineInterface): PanelActs {
       const id = await selfAppId($)
       if (to === 'self' && id) await checkRemote($, id)
     },
-    // 노트: register.md#toolPick — 도구판 칸 고르기(0.1.26): 편 칸 하나 · 바꾸면 줄 손질 · 보낼 칸 · 깨우는 값 카드 · 묻는 글을 닫는다. 「현재 세션」은 원격이 켜졌나 보고,
-    // 「어드바이저」는 기록을 바로 읽는다(설치판 어드바이저 칸을 펼 때와 같음)
+    // 노트: register.md#toolPick — 도구판 칸 펴고 접기(0.1.27 — 0.1.26 은 같은 칸을 다시 눌러도 그대로): 편 칸 하나 · 바꾸거나 접으면 줄 손질 · 보낼 칸 · 깨우는 값 카드 · 묻는 글을 닫는다.
+    // 펼 때만 「고정 · 보관」은 원격이 켜졌나 보고, 「어드바이저」는 기록을 바로 읽는다(설치판 어드바이저 칸을 펼 때와 같음). 역할 칩도 이 길(「역할 · 인계」 펴고 접기)
     tool: k => {
       void (async () => {
-        await update($, panelUi, u => (u.tool === k ? u : { ...u, tool: k, open: null, sending: null, card: null, ask: null }))
-        const id = await selfAppId($)
-        if (k === 'mgr' && id) await checkRemote($, id)
-        if (k === 'adv' && advisorCountOf(await useOf($), await advisorShare($)) > 0) await readAdvisorTimes($)
+        let isOpening = false
+        await update($, panelUi, u => {
+          isOpening = u.tool !== k
+          return { ...u, tool: isOpening ? k : null, open: null, sending: null, card: null, ask: null }
+        })
+        if (isOpening) await afterToolOpen($, k)
       })().catch(err => log($, `칸 고르기 실패 — ${String(err)}`))
+    },
+    // 노트: register.md#toolPick — 칸 펴기만(0.1.27 — 「지금」 줄 [보기]): 이미 펴져 있으면 그대로(접지 않음)
+    openTool: k => {
+      void (async () => {
+        let isOpening = false
+        await update($, panelUi, u => {
+          isOpening = u.tool !== k
+          return isOpening ? { ...u, tool: k, open: null, sending: null, card: null, ask: null } : u
+        })
+        if (isOpening) await afterToolOpen($, k)
+      })().catch(err => log($, `칸 펴기 실패 — ${String(err)}`))
     },
     go: id => goApp($, id),
     more: async id => {
@@ -2434,6 +2986,8 @@ function panelActs($: EngineInterface): PanelActs {
     pickPeerRel: on => void setSwitch($, PEER_REL_KEY, on),
     pickAutoUnpin: on => void setSwitch($, AUTO_UNPIN_KEY, on),
     pickAutoGroup: on => void setSwitch($, AUTO_GROUP_KEY, on).then(() => (on ? groupOwnTree($) : undefined)),
+    pickFirstUltra: on => void setSwitch($, FIRST_ULTRA_KEY, on),
+    pickSessionRules: on => void setRulesOn($, on),
     // 노트: register.md#sessionClean — 정리 · 끝난 곁가지 모두 보관 · 남은 자료 세기 · 휴지통으로(0.1.6)
     clean: async id => {
       const r = await cleanAct($, id)
@@ -2485,22 +3039,60 @@ async function quickActs($: EngineInterface, self: SessionMeta): Promise<QuickAc
 // 노트: register.md#bumpTick
 let lastSig = ''
 
+// 노트: register.md#clearMove — /clear 로 끝난 엔진 세션 번호(session.end 가 적고 moveCleared 가 비운다). 앱 세션은 앱 id 가 그대로라 안 적는다
+let clearedFrom: string | null = null
+
+/** 옮기는 자료 — 파일(자료 폴더 아래 · 열쇠 = 세션 번호)과 $.store 열쇠 앞머리. context/ · outbox/ · relay: 는 안 옮긴다(노트 register.md#clearMove) */
+const MOVE_DIRS = ['sessions', 'reports', 'boards', 'advisor', 'sent', 'recv'] as const
+const MOVE_KEYS = [OWNER_PREFIX, SUCC_PREFIX, ORCHE_PREFIX, REPORT_PREFIX, PIN_WHY_PREFIX, OWN_PANE_PREFIX] as const
+
+// 노트: register.md#clearMove
+async function moveCleared($: EngineInterface): Promise<void> {
+  if (clearedFrom === null) return
+  const to = await engineId($)
+  const from = clearedFrom
+  if (from === null || to === null || to === from) return
+  clearedFrom = null
+  const data = await dataDir($)
+  for (const dir of MOVE_DIRS) {
+    const text = await $.fs.read(`${data}/${dir}/${from}.json`).catch(() => null)
+    if (text === null || (await $.fs.exists(`${data}/${dir}/${to}.json`).catch(() => true))) continue
+    await $.fs.write(`${data}/${dir}/${to}.json`, text)
+  }
+  for (const key of await $.store.keys()) {
+    const v = await $.store.get(key)
+    const prefix = MOVE_KEYS.find(p => key.startsWith(p))
+    if (prefix !== undefined && key === `${prefix}${from}`) {
+      if ((await $.store.get(`${prefix}${to}`)) === undefined) await $.store.set(`${prefix}${to}`, v)
+      await $.store.delete(key)
+    } else if ((key.startsWith(OWNER_PREFIX) || key.startsWith(SUCC_PREFIX)) && v === from) await $.store.set(key, to)
+  }
+  await update($, appTick, n => n + 1)
+}
+
 /** 앱 메타 · 끝남 기록이 바뀌었거나 분이 넘어가면 appTick 을 올려 그리는 쪽을 다시 그리게 한다 */
 async function bumpTick($: EngineInterface): Promise<void> {
-  const selfId = await selfAppId($)
+  // 노트: register.md#bumpTick — 엔진 세션(0.1.28)은 앱 몫(앱 메타 · 대기 칸)을 빼고 등록부 수정 시각을 더해 같은 셈
+  const appId = await selfAppId($)
+  const selfId = appId ?? (await selfKey($))
   if (!selfId) return
+  // 노트: register.md#clearMove — /clear 뒤 새 번호로 자료 옮기기(여러 번 불려도 한 번)
+  if (!appId) await moveCleared($).catch(err => log($, `자료 옮기기 실패 — ${String(err)}`))
   // 창에 안 띄운 세션은 그릴 것이 없어 건너뛴다 — 창에 붙으면 그리면서 새로 읽는다(0.1.3 물음 ⑥). 못 물으면 그대로 돈다
   const surfaces = await $.session.surfaces().catch(() => null)
   if (surfaces !== null && surfaces.length === 0) return
   // 노트: register.md#advisorTimes — 읽을 일이 있을 때만 기록을 읽는다(기다리지 않음 — 큰 기록은 몇 초)
   void kickAdvisorTimes($).catch(err => log($, `advisor 기록 읽기 실패 — ${String(err)}`))
   // 노트: register.md#takeFromQueue — 못 받아도 표시는 돈다(다음 3초에 다시)
-  await takeFromQueue($, selfId, await refreshApp($)).catch(err => log($, `앱 대기 칸 받기 실패 — ${String(err)}`))
+  if (appId) await takeFromQueue($, appId, await refreshApp($)).catch(err => log($, `앱 대기 칸 받기 실패 — ${String(err)}`))
   // 노트: meta.md#outbox — 다른 세션이 이 세션 앞으로 내보낸 글을 할 일에
   await takeOutboxCards($, selfId).catch(err => log($, `내보낸 칸 받기 실패 — ${String(err)}`))
   await refreshEnded($)
   await heldCounts($)
   let sig = String(Math.floor((await $.clock.now()) / 60_000))
+  // 노트: register.md#bumpTick — 등록부(지금 열린 세션)가 바뀌면 — 엔진 세션 제목 · 「다른 세션」 칸(데스크톱 패널의 앱 밖 세션 묶음 포함 — 0.1.28)
+  await readRegistry($)
+  sig += registrySig()
   for (const [id, f] of app.files) sig += `|${id}:${f.mtimeMs}`
   for (const [id, f] of app.ended) sig += `|e${id}:${f.mtimeMs}`
   for (const [id, f] of heldCache) sig += `|h${id}:${f.mtimeMs}`
@@ -2545,19 +3137,29 @@ async function go($: EngineInterface, node: NavNode): Promise<void> {
   const url = `claude://code/continue?session=${encodeURIComponent(node.sessionId)}&source=session_nav`
   try {
     const ran = await $.process.run(['rundll32.exe', 'url.dll,FileProtocolHandler', url], { timeoutMs: 10000 })
-    if (ran.exitCode !== 0) $.ui.toast(`이동 실패(${ran.exitCode}): ${node.label}`)
+    if (ran.exitCode !== 0) toast($, `이동 실패(${ran.exitCode}): ${node.label}`)
   } catch (err) {
-    $.ui.toast(`이동 실패: ${String(err)}`)
+    toast($, `이동 실패: ${String(err)}`)
   }
 }
 
-/** 이 세션에 트리 패널을 열어 둘지: 연 세션과 같은 그룹이면 따라 연다 */
+// 노트: register.md#ownPane
+async function ownPaneKey($: EngineInterface): Promise<string | null> {
+  if (await selfAppId($)) return null
+  if (!(await engineServed($))) return null
+  const id = await engineId($)
+  return id ? `${OWN_PANE_PREFIX}${id}` : null
+}
+
+/** 이 세션에 트리 패널을 열어 둘지: 연 세션과 같은 그룹이면 따라 연다. 엔진 세션은 제 값만(노트 register.md#ownPane) */
 async function wantsPane($: EngineInterface): Promise<boolean> {
+  const own = await ownPaneKey($)
+  if (own) return (await $.store.get(own).catch(() => undefined)) === true
   return paneFollows(await $.store.get(PANE_KEY), await read($, selfGroup))
 }
 
-/** 이 세션의 패널을 저장된 상태에 맞춘다. 타이머가 계속 불러 세션을 옮겨도 따라 열린다 */
-async function syncPane($: EngineInterface): Promise<void> {
+/** 이 세션의 패널을 저장된 상태에 맞춘다. 타이머가 계속 불러 세션을 옮겨도 따라 열린다. isPerson = 사람이 연 길(togglePane — 키 달라고 함) */
+async function syncPane($: EngineInterface, isPerson = false): Promise<void> {
   const want = await wantsPane($)
   const isShown = (await $.ui.panes()).some(pane => pane.id === PANE)
   if (!want) {
@@ -2567,10 +3169,12 @@ async function syncPane($: EngineInterface): Promise<void> {
   }
   if (isShown && (await read($, isOpen))) return
   // 노트: register.md#syncPane
-  if ((await $.session.surfaces()).length === 0) return
+  const surfaces = await $.session.surfaces()
+  if (surfaces.length === 0) return
   await refreshRegistry($)
   await update($, isOpen, () => true)
-  await $.ui.open({ id: PANE, title: '세션' })
+  // 노트: register.md#syncPane — 터미널은 패널이 키를 받아야 칸 단추에 닿는다(입력창이 비었을 때만 엔진이 들어줌 — 0.1.28 ⑥). 사람이 연 길만 — 타이머가 다시 열 때 키를 가져가지 않게
+  await $.ui.open({ id: PANE, title: '세션', ...(isPerson && surfaces.includes(TERMINAL_SURFACE) ? { focus: true as const } : {}) })
   // 「이 세션」 쪽(처음 값)의 원격 끄기 단추 — 열 때 한 번 본다
   const id = await selfAppId($)
   if (id && ((await read($, panelUi)).view ?? 'self') === 'self') await checkRemote($, id).catch(() => {})
@@ -2578,10 +3182,18 @@ async function syncPane($: EngineInterface): Promise<void> {
 
 /** 띠 버튼 · 명령: 열려 있으면 닫고, 아니면 이 그룹으로 연다. 묶음을 아직 모르면(레지스트리를 못 읽은 채) 먼저 읽는다 — 안 그러면 눌러도 안 열린다 */
 async function togglePane($: EngineInterface): Promise<void> {
+  // 노트: register.md#ownPane — 엔진 세션은 제 열쇠만 바꾼다(데스크톱 패널은 그대로)
+  const own = await ownPaneKey($)
+  if (own) {
+    if (await wantsPane($)) await $.store.delete(own)
+    else await $.store.set(own, true)
+    await syncPane($, true)
+    return
+  }
   if ((await read($, selfGroup)) === null) await refreshRegistry($)
   if (await wantsPane($)) await $.store.delete(PANE_KEY)
   else await $.store.set(PANE_KEY, { group: await read($, selfGroup) })
-  await syncPane($)
+  await syncPane($, true)
 }
 
 /** 그룹별 트리. 자기 세션은 굵게, 나머지는 누르면 이동 */
@@ -2640,7 +3252,14 @@ export const register: Register = on => {
   // 노트: register.md#writeContextReport
   // 노트: register.md#relay — 쉬던 세션에서 친 신호를 그 차례에 묶는다(도구 도는 중에 친 신호는 prompt.submit 의 turnId 로 이미 묶임)
   on('turn.start', async ($, e, next) => {
+    // 노트: register.md#clearMove
+    if (clearedFrom !== null) await moveCleared($).catch(err => log($, `자료 옮기기 실패 — ${String(err)}`))
     if (e.agentId === undefined) {
+      // 노트: register.md#sendRules — 새 차례 기록: 이 차례를 시작한 글(prompt.submit 이 적은 값 — 없으면 사람 없는 차례)을 가져가며 비운다.
+      // 사람 글이 시작한 차례면 앞서 물은 곳이 이 차례에 통과한다(한 차례만)
+      const rp = await read($, rulesPending)
+      await update($, rulesPending, () => null)
+      await update($, rulesTurn, t => ({ isHuman: rp?.isHuman === true, places: [], asked: rp?.isHuman ? [] : t.asked, ok: rp?.isHuman ? t.asked : [], allow: rp?.allow ?? [] }))
       // 노트: register.md#ultraSpinner — 낱말이 없는 다음 차례에도 끈다(앞 차례가 끝 알림 없이 멈췄어도 남지 않게)
       const isUltra = ultraTyped(e.text)
       if ((await read($, ultraTurn)) !== isUltra) await update($, ultraTurn, () => isUltra)
@@ -2654,6 +3273,8 @@ export const register: Register = on => {
   on('turn.complete', async ($, e, next) => {
     await refreshRegistry($)
     if (e.agentId === undefined) {
+      // 노트: register.md#sendRules — 통과(ok) · 사용자가 시킨 곳(allow) · 센 곳은 그 차례 안에서만(물은 곳은 사람이 답할 때까지 남는다)
+      await update($, rulesTurn, t => ({ ...t, places: [], ok: [], allow: [] })).catch(() => {})
       if (await read($, ultraTurn)) await update($, ultraTurn, () => false)
       // 노트: register.md#relay — 기다리지 않는다(앱 길은 2.6초 걸릴 수 있음)
       void finishRelay($, e).catch(err => log($, `끝 답 보내기 실패 — ${String(err)}`))
@@ -2681,12 +3302,25 @@ export const register: Register = on => {
   on('session.send', async ($, e, next) => {
     if (e.origin.kind !== 'model' || e.agentId !== undefined) return next(e)
     const selfId = await selfAppId($).catch(() => null)
-    const p = selfId ? await readPending($, selfId) : null
-    if (!selfId || !p || e.to !== p.to) return next(e)
+    // 노트: register.md#engineSend — 엔진 세션(VS Code)의 SendMessage(바로 못 보내 넣은 지시 글 길 포함)도 보낸 글 기록에 — 닿은 것만, 받는 곳이 등록부에 있을 때
+    if (!selfId) {
+      const r = await next(e)
+      if (r.isDelivered) await noteModelSent($, e.to).catch(err => log($, `보낸 글 적기 실패 — ${String(err)}`))
+      return r
+    }
+    const p = await readPending($, selfId)
+    if (!p || e.to !== p.to) return next(e)
     if (p.way !== 'model') return { isDelivered: false, reason: RELAY_SELF_SEND }
     const r = await next(e)
     if (r.isDelivered) await writePending($, selfId, { ...p, modelSent: true }).catch(() => {})
     return r
+  })
+
+  // 노트: register.md#engineRecv — 이웃 세션 글이 이 세션에 들어옴(본 대화 · 사람 차례 아님): 엔진 세션은 보낸 곳마다 센다. 글은 그대로 넘긴다
+  on('session.receive', async ($, e, next) => {
+    const kind = e.origin.kind
+    if (e.agentId === undefined && (kind === 'peer' || kind === 'peer-send-message')) await noteRecv($, e.text, e.origin).catch(err => log($, `받은 글 세기 실패 — ${String(err)}`))
+    return next(e)
   })
 
   // ultrathink 단추 꼴: 입력창이 넣기 · 보내기 · 지우기 · 기록 불러오기로 바뀌면 낱말이 있나 다시 본다(노트 register.md#ultrathink)
@@ -2696,10 +3330,16 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // 사람이 패널을 닫으면 모든 세션에서 닫는다
+  // 노트: register.md#clearMove — /clear: 같은 프로세스가 새 번호로 간다. 새 번호는 이 훅에선 아직 몰라 다음 시계 · 차례에서 옮긴다(앱 세션은 앱 id 그대로라 안 함)
+  on('session.end', async ($, e, next) => {
+    if (e.reason === 'clear' && !(await selfAppId($))) clearedFrom = e.sessionId
+    return next(e)
+  })
+
+  // 사람이 패널을 닫으면 모든 세션에서 닫는다 — 엔진 세션은 제 패널만(노트 register.md#ownPane)
   on('ui.close', async ($, e, next) => {
     if (e.id === PANE && e.origin.kind === 'person') {
-      await $.store.delete(PANE_KEY)
+      await $.store.delete((await ownPaneKey($)) ?? PANE_KEY)
       await update($, isOpen, () => false)
     }
     return next(e)
@@ -2709,23 +3349,38 @@ export const register: Register = on => {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const ui = $.ui.resolve(e)
     const { Box } = ui
-    // 데스크톱 패널은 한글이 칸 계산보다 넓게 그려져 오른쪽 끝이 가려진다 — 폭의 1할가량을 비워 둔다
-    const pad = Math.max(3, Math.round(e.props.bodyColumns * 0.1))
+    // 데스크톱 패널은 한글이 칸 계산보다 넓게 그려져 오른쪽 끝이 가려진다 — 폭의 1할가량을 비워 둔다. VS Code 는 칸 셈이 달라 비우지 않는다(노트 vscode.md 「전체」)
+    const pad = padsPane(e.surface) && e.surface !== TERMINAL_SURFACE ? Math.max(3, Math.round(e.props.bodyColumns * 0.1)) : 0
     const cols = Math.max(24, e.props.bodyColumns - pad)
-    // 데스크톱에 앱 자료가 있으면 새 패널(노트 register.md#appSelf), 터미널 · 앱 자료 없음은 지금 msg 꼴(9절 「CLI 꼴 한동안 뺌」)
-    if (e.surface !== 'terminal') {
+    // 데스크톱에 앱 자료가 있으면 새 패널(노트 register.md#appSelf), VS Code · 터미널의 엔진 세션도 새 패널(0.1.28 — register.md#sessionSelf · 터미널은 ⑥ 결정 4), 그리는 「나」가 없으면 msg 꼴
+    {
+      drawnSurface = e.surface
       await read($, appTick)
       // 옛 판이 남긴 화면 상태엔 새 칸(remote)이 없다 — 처음 값 위에 얹는다
       const pu = { ...PANEL_UI_START, ...(await read($, panelUi)) }
-      const view = await loadPanelView($, pu).catch(err => {
+      const view = await loadPanelView($, pu, e.surface).catch(err => {
         log($, `패널 자료 읽기 실패 — ${String(err)}`)
         return null
       })
       if (view) {
         const acts = panelActs($)
+        // 노트: register.md#panelLook — 표면 꼴(데스크톱 앱 도구 · 좁은 칸 · 스위치 · 무지개) — 데스크톱 앱 세션은 처음 값 그대로
+        const look = panelLook(e.surface, e.props.placement, view.isApp !== false)
+        // 노트: register.md#noteLine — 알림 대신 한 줄은 패널 맨 아래(VS Code — 알림이 데스크톱 길인 표면엔 없음)
+        const note = toastsStack(e.surface) ? await read($, noteLine) : null
+        const { Text } = ui
+        // 노트: register.md#panelLook — 칸 셈이 둘인 표면(fluid — VS Code)은 패널 폭을 칸 수로 안 주고 꽉 채운다(칸 수로 주면 실제 폭의 약 7할 — 2차 실물 394px 중 273px)
+        const width = look.fluid ? '100%' : cols
         const draw = (v: PanelView, p: PanelUi) => (
-          <Box key="es-pane" flexDirection="column" width={cols}>
-            {drawPanel(ui, v, p, cols, acts)}
+          <Box key="es-pane" flexDirection="column" width={width}>
+            {drawPanel(ui, v, p, cols, acts, look)}
+            {note ? (
+              <Box key="es-note" marginTop={0.5} minWidth={0}>
+                <Text color="subtle" size="footnote">
+                  {note}
+                </Text>
+              </Box>
+            ) : null}
           </Box>
         )
         const out = draw(view, pu)
@@ -2745,7 +3400,7 @@ export const register: Register = on => {
         const isSame = (p: PanelUi) => p.folds.length === pu.folds.length && p.tool === pu.tool && pu.open === null && pu.sending === null && pu.card === null && pu.ask === null
         for (const light of tries) {
           if (isSame(light)) continue
-          const lightView = await loadPanelView($, light).catch(() => null)
+          const lightView = await loadPanelView($, light, e.surface).catch(() => null)
           const next = lightView ? draw(lightView, light) : null
           if (!next || drawnSize(next) > DRAW_CAP) continue
           // 그리는 중엔 상태를 못 쓴다(엔진 — 「drawing is pure」, 시험에서 잼) — 저장 · 알림은 그린 뒤 타이머로. 그사이 접힘이 바뀌었으면 덮지 않는다
@@ -2763,7 +3418,7 @@ export const register: Register = on => {
           return next
         }
         return (
-          <Box key="es-pane" flexDirection="column" width={cols}>
+          <Box key="es-pane" flexDirection="column" width={width}>
             {drawPanelBare(ui, pu, acts, '패널에 그릴 것이 너무 많습니다 — 다른 쪽을 고르세요')}
           </Box>
         )
@@ -2774,6 +3429,17 @@ export const register: Register = on => {
         {drawTree($, ui, await read($, tree), cols, e.surface === 'terminal')}
       </Box>
     )
+  })
+
+  // 노트: register.md#noteLine — 알림 대신 한 줄(VS Code)은 다음에 누를 때까지: 이 mod 단추 · 고르기가 눌리면 먼저 지우고 지나간다(그 누름이 새 줄을 적을 수 있다). 다른 표면은 그대로 지나감
+  const isOwnPlugin = (plugin: string) => (ownRow !== null ? plugin === ownRow : /^easy-session(@|$)/.test(plugin))
+  on('ui.press', async ($, e, next) => {
+    if (toastsStack(e.surface) && isOwnPlugin(e.plugin) && (await read($, noteLine)) !== null) await update($, noteLine, () => null)
+    return next(e)
+  })
+  on('ui.select', async ($, e, next) => {
+    if (toastsStack(e.surface) && isOwnPlugin(e.plugin) && (await read($, noteLine)) !== null) await update($, noteLine, () => null)
+    return next(e)
   })
 
   // 노트: register.md#quickItems — [설정] 「입력창 위 줄에 둘 것」 스위치(switch.tsx)는 element `es-sw-<칸>` 으로 온다. 지금 값에서
@@ -2795,6 +3461,18 @@ export const register: Register = on => {
       if (isOn && key === AUTO_GROUP_KEY) void groupOwnTree($).catch(() => {})
       return { props: { on: isOn, disabled: false } }
     }
+    // 새 세션 첫 글에 ultrathink(0.1.27 — 노트 register.md#firstUltra)
+    if (e.element === AUTO_SWITCH.ultra) {
+      const isOn = !(await storeOn($, FIRST_ULTRA_KEY))
+      await setSwitch($, FIRST_ULTRA_KEY, isOn)
+      return { props: { on: isOn, disabled: false } }
+    }
+    // 세션 규칙(0.1.27 — 처음 값 켬, 노트 register.md#sendRules)
+    if (e.element === RULES_SWITCH) {
+      const isOn = !(await rulesOn($))
+      await setRulesOn($, isOn)
+      return { props: { on: isOn, disabled: false } }
+    }
     // 보낸 세션 관계 알리기(0.1.20)
     if (e.element === PEER_SWITCH) {
       const isOn = !(await storeOn($, PEER_REL_KEY))
@@ -2814,18 +3492,22 @@ export const register: Register = on => {
     isWorking = e.props.isWorking === true
     if (typeof e.plugin === 'string') ownRow = e.plugin
     const inner = await next(e)
-    if (e.surface === 'terminal' || e.props.hasSurvey) return inner
+    if (e.props.hasSurvey) return inner
+    drawnSurface = e.surface
     await read($, appTick)
-    await read($, isOpen)
+    const isPaneOpen = await read($, isOpen)
     const isAsking = await read($, fableAsk)
-    const q = await loadQuickView($).catch(() => null)
-    if (!q) return inner
+    // 노트: register.md#sessionSelf — 데스크톱 앱 세션은 앱 메타, VS Code 의 엔진 세션은 등록부로 지은 이 세션(0.1.28)
+    const got = await loadQuickView($, e.surface).catch(() => null)
+    if (!got) return inner
     const ui = $.ui.resolve(e)
     const { Box } = ui
-    const acts = await quickActs($, q.self)
+    const acts = await quickActs($, got.q.self)
+    // 노트: register.md#noteLine — 알림 대신 한 줄은 패널이 닫혔을 때만 이 줄 끝에(열렸으면 패널 맨 아래)
+    const note = toastsStack(e.surface) && !isPaneOpen ? await read($, noteLine) : null
     return (
       <Box key="es-above" flexDirection="column" rowGap={0.5}>
-        {drawQuickRow(ui, q, acts)}
+        {drawQuickRow(ui, got.q, { ...acts, note }, { ...DESKTOP_LOOK, isApp: got.isApp, rainbowHex: rainbowAsHex(e.surface), textPress: pressesText(e.surface), isText: e.surface === TERMINAL_SURFACE })}
         {isAsking ? drawFableAsk(ui, await planOf($), fableActs($)) : null}
         <Box key="es-above-line" height={0.06} backgroundColor="promptBorder" />
         {inner}
@@ -2896,6 +3578,8 @@ export const register: Register = on => {
   // 자식 보고: 끈 세션은 보고 덩이를 떼어 모으고 보고만 든 앱 턴은 막는다 — 노트 register.md#reports.
   // 화면: 고른 값을 글마다 한 줄로 붙인다(쓰지 않음이면 안 붙임) — 노트 register.md#displayLine
   on('prompt.submit', async ($, e, next) => {
+    // 노트: register.md#clearMove
+    if (clearedFrom !== null) await moveCleared($).catch(err => log($, `자료 옮기기 실패 — ${String(err)}`))
     let text = e.text
     if (!e.command && text.includes('you started (local_')) {
       const held = await holdReports($, e).catch(err => {
@@ -2908,30 +3592,63 @@ export const register: Register = on => {
     // 노트: register.md#relay — 사람이 친 글의 보내기 신호. 글은 안 고치고 그 차례 모델에게만 한 줄(실패해도 글은 그대로 간다)
     const kind = e.origin?.kind
     const relayLine = !e.command && (kind === 'composer' || kind === 'bridge') ? await relaySubmit($, e, text).catch(err => (log($, `보내기 신호 처리 실패 — ${String(err)}`), null)) : null
+    // 노트: register.md#turnLines — 그 차례 줄 셋(첫 차례 선언 · 조율자 경계 · 위임 한 단계) · 말로 하기 힌트. 실패해도 글은 그대로 간다
+    const rules = !e.command ? await turnLines($, kind, text).catch(err => (log($, `차례 줄 실패 — ${String(err)}`), null)) : null
+    // 노트: register.md#sendRules — 보내기 확인 차례 기록(이 글이 사람 글인가 · 사용자가 시킨 곳). 실패해도 글은 그대로 간다
+    if (!e.command) await noteTurnOrigin($, e, text, rules?.allow).catch(err => log($, `차례 기록 실패 — ${String(err)}`))
     // 노트: register.md#peerRel — 다른 세션이 보낸 글에만(사람 글 · 앱 보고는 안 본다). 실패해도 글은 그대로 간다
     const peerRel = !e.command && (kind === 'peer' || kind === 'peer-send-message') ? await peerSubmit($, e.origin, text).catch(err => (log($, `보낸 세션 관계 가리기 실패 — ${String(err)}`), null)) : null
+    // 노트: register.md#engineRecv — 엔진 세션이 받은 이웃 글 수(session.receive 와 겹치면 한 번)
+    if (!e.command && (kind === 'peer' || kind === 'peer-send-message')) await noteRecv($, text, e.origin).catch(err => log($, `받은 글 세기 실패 — ${String(err)}`))
     const line = displayLine(await displayOf($))
-    const added = [relayLine, peerRel, line].filter((x): x is string => x !== null)
+    const added = [relayLine, ...(rules?.lines ?? []), peerRel, line].filter((x): x is string => x !== null)
     return next(added.length === 0 ? { ...e, text } : { ...e, text, context: [...(e.context ?? []), ...added] })
   })
 
   // 도구 막기: 화면이 태블릿 · 폰이면 고르기 카드 · 그림 위젯을 거절하고 Claude 에게 글로 물으라고 돌려준다 — 노트 register.md#toolBlock
   on('tool.call', { tool: 'AskUserQuestion' }, async ($, e, next) => {
     const why = blockText(await displayOf($), 'AskUserQuestion')
-    return why === null ? next(e) : { deny: why }
+    if (why !== null) return { deny: why }
+    const r = await next(e)
+    // 노트: register.md#sendRules — 고르기 카드 답은 같은 차례의 도구 결과로 온다: 막힘 · 오류가 아니면 「사람이 답함」 — 물은 곳은 이 차례에 통과
+    if (e.agentId === undefined && r.deny === undefined && !r.isError) await humanAnswered($).catch(err => log($, `보내기 확인 기록 실패 — ${String(err)}`))
+    return r
   })
+
+  // 노트: register.md#sendRules — msg 규칙 R1(끝난 · 보관된 세션) · R2(한 차례 세 번째 다른 곳) 막기. 서브에이전트가 부른 것 · 이 mod 가 부른 것은 안 본다.
+  // .catch = 훅이 던지면 막는다(닫힌 쪽 — 엔진은 실패한 훅을 건너뛰어 도구가 돈다, 공유 노트 hook-probe-0127 잼)
+  on('tool.call', { tool: 'SendMessage' }, async ($, e, next) => {
+    if (e.agentId !== undefined || isOwnCall(next)) return next(e)
+    const deny = await guardSend($, (e as unknown as { to?: unknown }).to, 'send')
+    return deny === null ? next(e) : { deny }
+  }).catch(($, e, next) => guardCatch($, e, next as never) as never)
+  on('tool.call', { tool: 'mcp__ccd_session_mgmt__send_message' }, async ($, e, next) => {
+    if (e.agentId !== undefined || isOwnCall(next)) return next(e)
+    const deny = await guardSend($, (e as unknown as { session_id?: unknown }).session_id, 'mcp')
+    return deny === null ? next(e) : { deny }
+  }).catch(($, e, next) => guardCatch($, e, next as never) as never)
   on('tool.call', { tool: 'mcp__visualize__show_widget' }, async ($, e, next) => {
     const why = blockText(await displayOf($), 'mcp__visualize__show_widget')
     return why === null ? next(e) : { deny: why }
   })
 
   // 이 세션이 연 새 세션: 인계 대기 · 저절로 떼어 내기 · 저절로 고정(설정) — 세션 열기 결과 글의 새 id 로. 노트 register.md#newChild
+  // 첫 글에 ultrathink(설정 — 0.1.27): 켬이면 보내기 전에 입력 prompt 맨 앞에 낱말(MCP 도구 입력 고쳐 쓰기 — 헤드리스로 서버까지 닿음을 잼, 노트 register.md#firstUltra)
   on('tool.call', { tool: 'mcp__ccd_session__start_session' }, async ($, e, next) => {
-    const r = await next(e)
+    const ultra = withFirstUltra((e as unknown as { prompt?: unknown }).prompt)
+    const isUltra = ultra !== null && (await storeOn($, FIRST_ULTRA_KEY).catch(() => false))
+    const r = await next(isUltra ? ({ ...e, prompt: ultra } as typeof e) : e)
     if (r.deny !== undefined || r.isError) return r
     // 모델이 읽는 결과 글(text)에 새 id 가 있다 — core 가 아닌 답엔 text 가 없어 결과 값을 본다
     await newChild($, r.text ?? JSON.stringify(r.result ?? '')).catch(err => log($, `새 자식 세션 처리 실패 — ${String(err)}`))
     return r
+  })
+  // 하던 일을 새 세션으로 넘길 때(hand_off_to_session)도 같은 스위치로 넘기는 글(remaining_plan) 맨 앞에 낱말.
+  // [인계] 단추는 start_session 길이라 위 훅이 맡는다. 노트 register.md#firstUltra
+  on('tool.call', { tool: 'mcp__ccd_session__hand_off_to_session' }, async ($, e, next) => {
+    const ultra = withFirstUltra((e as unknown as { remaining_plan?: unknown }).remaining_plan)
+    const isUltra = ultra !== null && (await storeOn($, FIRST_ULTRA_KEY).catch(() => false))
+    return next(isUltra ? ({ ...e, remaining_plan: ultra } as typeof e) : e)
   })
 
   // 인계한 옛 주인을 Claude 가 보관할 때 — 붙은 자식을 먼저 떼어 남긴다(같이 보관되지 않게). 노트 register.md#handoff
