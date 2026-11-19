@@ -1,6 +1,5 @@
 import type { ClientModule } from 'claude-code'
 
-// 노트: panel.md#onOff — 이지 컴팩트 hooks/switch.tsx 그대로(앱 스위치 꼴 · 함정은 그쪽 노트 switch.md). 상태를 안 든다 —
 // 누르면 post 로 알리고 register.tsx ui.message 훅이 지금 값을 뒤집어 새 props 를 돌려준다
 type SwitchProps = { on: boolean; disabled: boolean }
 

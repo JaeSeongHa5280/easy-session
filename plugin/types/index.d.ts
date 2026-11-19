@@ -205,7 +205,8 @@ export type HeldBox = { items: HeldReport[]; seen: HeldSeen[]; took?: Readonly<R
 export type DraftSignal = { word: string; rest: string }
 
 /** 받을 세션 찾기 결과. 못 찾으면 miss(self = 이 세션뿐 · none = 없음 · many = 여럿 · crowns = 왕관 여럿)와 맞는 세션 이름. 노트 meta.md#findTarget */
-export type RelayFound = { id: string } | { miss: 'self' | 'none' | 'many' | 'crowns'; names: readonly string[] }
+/** 입력창 신호의 받는 곳 — name = 위 · 메인 밖 이름(0.1.29 ③ F9 — 입력창 보내기는 위로만, 보내지 않음). crowns · many 는 0.1.29 부터 안 나옴(글만 남김) */
+export type RelayFound = { id: string } | { miss: 'self' | 'none' | 'many' | 'crowns' | 'name'; names: readonly string[] }
 
 /** 보내는 길 — direct 이 세션 mod 가 바로 · model Claude 가 SendMessage · card 받는 세션 할 일 카드. 노트 meta.md#relayWay */
 export type RelayWay = 'direct' | 'model' | 'card'
@@ -255,19 +256,46 @@ export type ReportState = { on: boolean; isSet: boolean; from: string | null }
  * 칸이면 'to:' + id) · 카드 · 보낼 글 · 펼친 접힘(open: · rest: · ended: · arch: + 묶음 맨 위 id, shut: · msgs: + 줄 id,
  * sibs · kids = 「이 세션」 쪽 목록 나머지, held: + 메시지 열쇠 = 펼친 내용(한 번에 하나), help: + 칸 이름 = ? 를 눌러 편 설명,
  * board-lines · board-edit · adopt, adv-more = 어드바이저 칸 이전 줄) · 세션 관리에서 묻는 중(끝내기 · 보관 — 0.1.5) ·
- * 도구판에서 편 칸 하나(0.1.26 — 칸 열쇠 msg · col · inq · rep · brd · role · cmd · adv · mgr, null = 닫음)
+ * 도구판에서 편 칸 하나(0.1.26 — 칸 열쇠 msg · col · inq · rep · brd · role · cmd · adv · mgr, null = 닫음) ·
+ * remoteBad = 원격 상태를 못 읽은 이 세션 id(0.1.29 ② F1 — 「고정 · 보관」 칸 Remote Control 스위치 흐림, 옛 판 상태엔 없음)
  */
 export type PanelUi = {
   view: 'self' | 'settings'
   tool: string | null
   open: string | null
   remote: string | null
+  remoteBad?: string | null
   sending: string | null
   card: string | null
   draft: string
   folds: string[]
   ask: 'end' | 'archive' | 'trash' | null
 }
+
+/**
+ * 패널 판 단추 · 서랍 상태(0.1.29 — easy-compact types UpdateState 그대로, 노트 register.md#refreshUpdateInfo). phase: idle = 아직 안 눌러 봄 ·
+ * checking · latest · newer · updating · done = 받음 · failed · synced = 디렉터리 설치본(Claude Code 가 켤 때 받음) · dev = 폴더로 불러온 판 · 폴더 마켓 판(단추 없음).
+ * devBuild = 개발본(개발자 구역 안에서만 켬 — 「개발자 모드」 글), devOff = 개발자 모드 꺼짐. updatedTo = 업데이트 뒤 첫 실행의 그 판(본 판과 다를 때).
+ * changes · versions = 판별 바뀐 것(새 판부터), open = 서랍 안 펼친 것(명령 출력)
+ */
+export type UpdateState = {
+  phase: 'idle' | 'checking' | 'latest' | 'newer' | 'updating' | 'done' | 'failed' | 'synced' | 'dev'
+  devOff?: boolean
+  devBuild?: boolean
+  own: string | null
+  market: string | null
+  marketAt: string | null
+  error?: string
+  failedOn?: 'check' | 'apply'
+  isTimeout?: boolean
+  updatedTo?: string | null
+  changes?: Record<string, ChangeGroup[]>
+  open?: { changes?: boolean; error?: boolean; note?: boolean }
+  versions?: string[]
+}
+
+/** 변경 기록 한 판의 묶음 하나(### 머리 · 줄들) */
+export type ChangeGroup = { head: string; items: string[] }
 
 declare module 'claude-code' {
   interface PluginState {
@@ -302,6 +330,10 @@ declare module 'claude-code' {
       rulesPending: RulesPending | null
       /** VS Code 알림 대신 한 줄(0.1.28) — 다음에 누를 때까지(노트 register.md#noteLine) */
       noteLine: string | null
+      /** 패널 판 단추 · 서랍 상태(0.1.29 — 노트 register.md#refreshUpdateInfo) */
+      update: UpdateState
+      /** 판 단추 서랍을 폈는가(0.1.29) */
+      updDrawer: boolean
     }
   }
 }

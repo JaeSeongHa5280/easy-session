@@ -1,7 +1,5 @@
-// 노트: panel.md#advisorChar — advisor 켜짐 그림(조언 벌레). 이지 컴팩트 agent-char.ts 와 같은 16px 픽셀 꼴
 export type AdvisorPose = 'on' | 'adv' | 'sleep'
 
-// 노트: panel.md#advisorChar
 const PAL: Readonly<Record<string, string>> = {
   o: '#1d2c48',
   e: '#0f1b2a',
@@ -19,7 +17,6 @@ const PAL: Readonly<Record<string, string>> = {
   Z: '#9aa3b5',
 }
 
-// 노트: panel.md#advisorChar — 학사모(윗면 밝게) · 동그란 안경 · 보라 몸
 const BODY = [
   '..oooooooooooo..',
   '.oPPPPPPPPPPPPo.',
@@ -44,7 +41,6 @@ const STAR = ['..P..', '..P..', 'PPWPP', '..P..', '..P..']
 const ZZ = ['ZZZ', '..Z', '.Z.', 'ZZZ']
 const zz = ['zz', '.z', 'zz']
 
-// 노트: panel.md#advisorChar — 그림 폭(16칸 = 몸, 손짓 21 · 잠 19)
 const WIDTH: Readonly<Record<AdvisorPose, number>> = { on: 16, adv: 21, sleep: 19 }
 
 /** 안 걸린 그림 — 몸 색만 회색으로 */
@@ -83,12 +79,10 @@ function paths(grid: readonly string[], dx: number, dy: number): string {
     .join('')
 }
 
-// 노트: panel.md#advisorChar
 export function advisorCharWidth(px: number, pose: AdvisorPose): number {
   return (px * WIDTH[pose]) / 16
 }
 
-// 노트: panel.md#advisorChar — 손짓(adv)은 팔 · 별이 두 번 깜빡이고 멈춘다(한 번만, 키프레임엔 opacity 만)
 export function advisorCharSvg(px: number, pose: AdvisorPose, isMoving = false): string {
   let body: string
   if (pose === 'sleep') body = paths(gray(SLEEP), 0, 0) + paths(ZZ, 14, 2) + paths(zz, 17, 0)

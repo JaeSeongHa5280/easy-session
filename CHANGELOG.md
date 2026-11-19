@@ -4,6 +4,39 @@ All notable changes to easy-session. Versions follow [Semantic Versioning](https
 
 **Update:** send Claude `Update this plugin: easy-session (claude plugin marketplace update easy-session, then claude plugin update easy-session@easy-session)`, or run those two lines in a shell, then restart Claude — see [Update](README.md#update).
 
+## [0.1.29] — 2026-11-20
+
+### New
+- **English interface** — Settings → Screen · advisor → **언어 · Language**: Auto, 한국어 or English. The panel, the line above the input, notices, confirmation cards and the lines easy-session adds for Claude (instructions in the prompt box, relation lines, the Screen line, rule lines) follow it. Auto takes the first of Claude Code's `language` setting (project, then user), the desktop app's language and your OS language — Korean when that one is Korean, English otherwise — and checks again every 30 seconds. The version drawer reads this changelog in the chosen language. easy-session still recognizes its own instructions written in either language. Kept as they are in both: title forms (`N차`), the board's end line (`끝:`), the Korean words behind the plain-words hints, and the `결정할 것:` line behind the Decision tag.
+- **Version button in the panel** — the session panel's top row gets a version button at its right end (a dim `v0.1.29` most of the time). It opens a drawer with **Check for updates** and **Update**, and what changed in each newer version. It checks only when you press it; when its commands can't run, **Put in prompt box** hands the update to Claude. When a check fails, the reason gets the whole line and **Try again** and **Output ▸** go on the line below.
+- **First-run card** — if you've never changed the new-child-session settings or child reports, Session tools in a desktop app session shows *Start with the recommended settings?* once. **Turn on recommended** turns on three: hold child reports in the panel, pin new child sessions and unpin them when they're done, and group them in the sidebar (detach and `ultrathink` in the first message stay off). **Keep the app's way** changes nothing. Either way it doesn't come back; until you press one, the app's way stays.
+- **New child sessions preview** — Settings → New child sessions starts with **Preview · sidebar**: a small drawing of how the sidebar looks with the current values when a parent opens two children (the pinned area, the group, where detached ones go, child reports). It changes as you flip a switch.
+- **.md locks** — Settings → .md locks. With **See and release .md locks** on (off at first), each lock in the locks folder (`<Claude config folder>/locks` at first) shows its target, time left, owner session and intent, with **Release**. Release doesn't delete the file; it sets the end time to now. When the owner session is archived or ended, its lock is released at the end of a turn — no need to ask in the chat.
+- **Deeper session trees** — when a row in the Below tile has sessions under it, it gets **› N below** (*N need input* when one waits). Press it to open them as indented rows.
+- **Main row in the Above tile** — when the main isn't the session directly above, the Above tile gets a Main row with **Send** and **Go**.
+- **`>>up` signal** — end your message with `>>up` (or `>>위`) and the answer goes to the session directly above when the turn ends.
+- **Pin and unpin for auto-mode sessions** — when an auto-mode session should pin a new child, or unpin one that ended, a Bypass-permissions session above it in the same session tree does it at the end of that session's turn. With none above, nothing changes.
+- **"may be held" line** — when the receiving session's permission mode differs from the sender's, the instruction and notice for Send, Forward and `>>` get one more line. Nothing is blocked.
+
+### Changed
+- **Main** — the main is the orchestrator at the top of its session tree. Each session tree has its own, so one computer can have several. `>>main`, Forward's Main, the role chip and the relation lines all use this. A main with no sessions below goes back with **Step down** in the Role card.
+- **The prompt box sends only upward** — Forward picks Above or Main, and the signals are `>>up` and `>>main` (`>>위` · `>>메인`). `>>name` isn't sent; a one-line notice says so. For any other session, ask Claude to send it.
+- **Where detached sessions go** — a session you detach yourself, from the panel or the sidebar, goes to the top of easy-session's session tree too. A new child detached automatically stays under its parent. When a detached session hands over, the next round takes over its place at the top.
+- **Tile badges** — pressing the orange number on a tile's corner opens that tile too.
+- **Archive tile** — the current state (Pin, Remote Control, Ended) is switches, and actions (Clean up, Tidy title, Archive, Detach) are buttons. When the Remote Control state can't be read, its switch is dimmed with *Can't read the state*. Turning Ended on asks once. The Tidy up tile in VS Code and a terminal works the same way.
+- **Child reports value** — the Korean name of Hold in the panel got shorter, as it was cut off in a narrow panel.
+- **"Session tree"** — the relation lines, Settings explanations and the handover instruction say "session tree" throughout.
+- **fable confirmation card** — updated to Fable 5.2 rates: twice Opus 5.5 (list price $8 input · $40 output per million tokens). On a subscription it uses more of the 5-hour allowance than Opus 5.5.
+- **`/fork` and `/rewind` chips** — in the desktop app, `/fork` reads *Fork this conversation into a new session*. `/rewind` doesn't go in while the prompt box has text; it says to clear the prompt box first.
+- **Clean up instruction** — a pin added automatically is removed by a Bypass-permissions session; for an auto-mode session, one above it in the same session tree does it. With no such session the pin stays.
+- **First-draw time log** — how long the panel takes to draw the first time goes in the data folder, `diag/first-draw.json` (the last 50 lines, not shown on screen), to measure why the panel can be slow when you click another session.
+- **VS Code `ultrathink` chip** — a filled button (the VS Code theme's button color) while it's in your prompt.
+- **Tell where the sender is** — in VS Code and a terminal, its Settings explanation adds *Desktop app only — changing it here applies to desktop sessions*.
+
+### Fixed
+- **Archiving a session that handed over** — when an auto-mode session tries to archive itself after handing over while the new session is still attached, it's stopped and told to `detach_session` first, since archiving would archive the attached session too. Bypass-permissions sessions detach first and archive, as before.
+- **Finding the sender** — when a received message named its sender only by app session id, the sender wasn't found and the relation line was left out. Fixed.
+
 ## [0.1.28] — 2026-11-19
 
 0.1.27 was never published, so its changes are listed here too.
