@@ -4,6 +4,11 @@ All notable changes to easy-session. Versions follow [Semantic Versioning](https
 
 **Update:** send Claude `Update this plugin: easy-session (claude plugin marketplace update easy-session, then claude plugin update easy-session@easy-session)`, or run those two lines in a shell, then restart Claude — see [Update](README.md#update).
 
+## [0.1.30] — 2026-11-20
+
+### Changed
+- **Korean wording** — code comments and the Korean changelog now use 「세션 트리」 (session tree) for the sessions above and below one another. The screen and behavior are the same as 0.1.29.
+
 ## [0.1.29] — 2026-11-20
 
 ### New

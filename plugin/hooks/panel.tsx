@@ -115,7 +115,7 @@ const plainOf = (x: unknown): string => {
 /** 고르기 하나(드롭다운 값 · 목록) */
 export type Choice = { value: string; options: readonly { value: string; label: string }[] }
 
-/** 주인 고르기 재료 — value = 고른 값(app 이면 앱 관계대로), current = 지금 나무 위 세션(없으면 맨 위), isOpener = 그 세션이 이 세션을 앱에서 연 세션인가(노트 panel.md#ownerSelect) */
+/** 주인 고르기 재료 — value = 고른 값(app 이면 앱 관계대로), current = 지금 세션 트리 위 세션(없으면 맨 위), isOpener = 그 세션이 이 세션을 앱에서 연 세션인가(노트 panel.md#ownerSelect) */
 export type OwnerPick = { value: string; choices: readonly string[]; current: string | null; isOpener: boolean }
 
 /** [설정] 「md 잠금」 묶음(0.1.29 ④ F2 — 노트 panel.md#mdLock). rows null = 스위치 꺼짐(안 읽음) · error = 폴더를 못 읽음 */
@@ -126,7 +126,7 @@ export type PanelView = {
   selfId: string
   /** 데스크톱 앱 도구를 부를 수 있나(0.1.28 — register.md#canUseApp) — 꼴 값 PanelLook.isApp 의 재료. 없으면 됨 */
   isApp?: boolean
-  /** 「다른 세션」 칸 지금 열린 세션(0.1.28 — register.md#openLists): openDesk = 데스크톱 세션(엔진 세션 패널만 · 나무 차례) · openOut = 데스크톱 앱 밖 세션(VS Code · 터미널) */
+  /** 「다른 세션」 칸 지금 열린 세션(0.1.28 — register.md#openLists): openDesk = 데스크톱 세션(엔진 세션 패널만 · 세션 트리 차례) · openOut = 데스크톱 앱 밖 세션(VS Code · 터미널) */
   openDesk: readonly OpenRow[]
   openOut: readonly OpenRow[]
   now: number
@@ -138,9 +138,9 @@ export type PanelView = {
   /** 이 세션 역할(0.1.26 — 관계 줄 역할 칩, meta.md#roleOf) · 메인 세션 제목(메인이 있고 이 세션이 아닐 때 — 「역할 · 인계」 메인 줄 까닭) */
   role: SessionRole
   mainTitle: string | null
-  /** 위 세션(패널 나무 위 · 살아 있음) — 없으면 null. tag = 앞 차수(이 세션이 인계받은 세션 — 나무 ②) · 연 세션(앱에서 연 세션) · 주인(사람이 정했거나 인계로 넘어옴) */
+  /** 위 세션(패널 세션 트리 위 · 살아 있음) — 없으면 null. tag = 앞 차수(이 세션이 인계받은 세션 — 세션 트리 ②) · 연 세션(앱에서 연 세션) · 주인(사람이 정했거나 인계로 넘어옴) */
   up: SendRow | null
-  /** 이 세션을 인계받은 뒤 차수가 이 세션 아래에 있을 때(나무 ② — 둘 다 살아 있고 앱 자식) 그 id — 하위 줄 「뒤 차수」 표지. 없으면 null */
+  /** 이 세션을 인계받은 뒤 차수가 이 세션 아래에 있을 때(세션 트리 ② — 둘 다 살아 있고 앱 자식) 그 id — 하위 줄 「뒤 차수」 표지. 없으면 null */
   heir: string | null
   /** 메인(`>>메인` 과 같은 셈 — 노트 panel.md#compose) — 이 세션 · 위 세션이면 null(「위 세션」 칸 메인 줄 — 0.1.29 ③ ⓓ) */
   mainRow: SendRow | null
@@ -183,7 +183,7 @@ export type PanelView = {
   /** 보관을 묻는 글 재료(0.1.5) — 앱에 붙은 살아 있는 자식 수(보관하면 같이 보관됨) · 인계한 옛 주인인가(그때만 먼저 떼어 남김) */
   selfAttached: number
   isHanded: boolean
-  /** 할 일 「끝난 곁가지」(0.1.6) — 이 세션 나무 아래 끝남 기록이 있는 살아 있는 세션 */
+  /** 할 일 「끝난 곁가지」(0.1.6) — 이 세션의 세션 트리 아래 끝남 기록이 있는 살아 있는 세션 */
   endedKids: readonly EndedKid[]
   /** [설정] 「정리」 칸 — 남은 자료 마지막 셈(null = 아직 안 셈) */
   clean: CleanScan | null
@@ -489,7 +489,7 @@ function modelName(model: string): string {
 
 type Node = { row: FamilyRow; kids: Node[] }
 
-/** 깊이 우선 줄(buildFamilies)을 나무로 */
+/** 깊이 우선 줄(buildFamilies)을 세션 트리로 */
 function nest(rows: readonly FamilyRow[]): Node[] {
   const out: Node[] = []
   const stack: Node[] = []
@@ -806,7 +806,7 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
   const canFix = v.role === 'main' || v.role === 'orche'
   const endedAt = new Map(v.endedKids.map(x => [x.id, x.at] as const))
   const endedAttached = new Map(v.endedKids.map(x => [x.id, x.attached] as const))
-  // 하위 줄이 없는 보낸 세션(보관 · 나무 밖 · 다른 세션의 내보낸 칸)도 「다른 세션」에 보이고 센다 — 어떤 글도 안 보이는 데 남지 않게
+  // 하위 줄이 없는 보낸 세션(보관 · 세션 트리 밖 · 다른 세션의 내보낸 칸)도 「다른 세션」에 보이고 센다 — 어떤 글도 안 보이는 데 남지 않게
   const held = [...v.heldItems].reverse()
   const kidIds = new Set(kids.map(r => r.id))
   const sibIds = new Set(sibs.map(r => r.id))
@@ -1959,7 +1959,7 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
   const SENT_HELP_LINE = L('보낸 글은 보냄 → 도착 → 읽음 → 답함으로 보입니다(앱 도착 기록).', "Sent messages show Sent → Arrived → Read → Replied (from the app's delivery record).")
   const sentRow = (key: string, list: readonly SentRow[], help?: RowHelp) => cardRow(key, L('보낸 글', 'Sent'), list.length === 0 ? subText(L('없음', 'None')) : sentList(`${key}-l`, list), help)
 
-  // 「보고는 사용자에게」(시안 5.1 정할 것 1), 단독은 흐린 칸에 한 줄. 0.1.27: 줄 꼴 — 이름표 「앞 차수」(나무 ②) · 「연 세션」 · 「주인」(위 줄) · 「보고」 · 「보낸 글」, 풀이는 위 줄 이름표 옆 ?
+  // 「보고는 사용자에게」(시안 5.1 정할 것 1), 단독은 흐린 칸에 한 줄. 0.1.27: 줄 꼴 — 이름표 「앞 차수」(세션 트리 ②) · 「연 세션」 · 「주인」(위 줄) · 「보고」 · 「보낸 글」, 풀이는 위 줄 이름표 옆 ?
   const MSG_HELP_LINES = [L('[보고 꼴로]는 끝난 것 · 하는 중 · 막힌 것 · 기다리는 결정 · 다음 다섯 칸을 입력칸에 넣습니다.', 'Report form puts five parts in the prompt box: done, in progress, blocked, decisions waiting, next.'), SENT_HELP_LINE]
   const MAIN_HELP_LINE = L('메인 = 이 세션 트리 맨 위 오케 — 입력창 「전달」 · >>메인 과 같은 세션입니다.', 'Main = the orchestrator at the top of this session tree — the same session as Forward and >>main on the line above the input.')
   const msgBody = (): unknown[][] => {
@@ -3227,7 +3227,7 @@ const QUICK_ICONS = {
   pin: '<path d="M15 4.5l-4 4l-4 1.5l-1.5 1.5l7 7l1.5 -1.5l1.5 -4l4 -4"/><path d="M9 15l-4.5 4.5"/><path d="M14.5 4l5.5 5.5"/>',
   snowflake:
     '<path d="M10 4l2 1l2 -1"/><path d="M12 2v6.5l3 1.72"/><path d="M17.928 6.268l.134 2.232l1.866 1.232"/><path d="M20.66 7l-5.629 3.25l.01 3.458"/><path d="M19.928 14.268l-1.866 1.232l-.134 2.232"/><path d="M20.66 17l-5.629 -3.25l-2.99 1.738"/><path d="M14 20l-2 -1l-2 1"/><path d="M12 22v-6.5l-3 -1.72"/><path d="M6.072 17.732l-.134 -2.232l-1.866 -1.232"/><path d="M3.34 17l5.629 -3.25l-.01 -3.458"/><path d="M4.072 9.732l1.866 -1.232l.134 -2.232"/><path d="M3.34 7l5.629 3.25l2.99 -1.738"/>',
-  // 오케 나무 판(10-31 고름 — Tabler crown · unlink)
+  // 오케 세션 트리 판(10-31 고름 — Tabler crown · unlink)
   crown: '<path d="M12 6l4 6l5 -4l-2 10h-14l-2 -10l5 4z"/>',
   unlink:
     '<path d="M17 22v-2"/><path d="M9 15l6 -6"/><path d="M11 6l.463 -.536a5 5 0 0 1 7.071 7.072l-.534 .463"/><path d="M13 18l-.397 .534a5.068 5.068 0 0 1 -7.127 0a4.972 4.972 0 0 1 0 -7.071l.53 -.463"/><path d="M20 17h2"/><path d="M2 7h2"/><path d="M7 2v2"/>',

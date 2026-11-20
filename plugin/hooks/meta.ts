@@ -284,7 +284,7 @@ type RowOptions = Pick<FamilyOptions, 'selfId' | 'now' | 'ended' | 'ttlMs' | 'or
 const byCreated = (a: SessionMeta, b: SessionMeta): number =>
   (a.createdAt ?? Infinity) - (b.createdAt ?? Infinity) || a.id.localeCompare(b.id)
 
-/** 패널 한 줄 — 묶음 나무 밖(「이 세션」 쪽의 같은 주인 아래 · 자식)에서도 같은 꼴로 */
+/** 패널 한 줄 — 묶음 세션 트리 밖(「이 세션」 쪽의 같은 주인 아래 · 자식)에서도 같은 꼴로 */
 export function familyRow(m: SessionMeta, depth: number, o: RowOptions): FamilyRow {
   return {
     id: m.id,
@@ -308,12 +308,12 @@ export function familyRow(m: SessionMeta, depth: number, o: RowOptions): FamilyR
   }
 }
 
-// ── 패널 나무 — 앱 관계 위에 이지 세션 기록(주인 덮어쓰기 · 인계 · 오케)을 얹는다 ──────────────────────────
+// ── 패널 세션 트리 — 앱 관계 위에 이지 세션 기록(주인 덮어쓰기 · 인계 · 오케)을 얹는다 ──────────────────────────
 
 /** 주인 덮어쓰기 값: 맨 위(주인 없음) */
 export const TOP = 'top'
 
-/** 나무 셈에 쓰는 이지 세션 기록 — 오케 표시는 없어도 된다(없으면 오케 인계를 못 가림) */
+/** 세션 트리 셈에 쓰는 이지 세션 기록 — 오케 표시는 없어도 된다(없으면 오케 인계를 못 가림) */
 export type TreeLinkInput = Pick<TreeLinks, 'owners' | 'succ'> & { orche?: ReadonlySet<string> }
 
 export function treeParents(metas: ReadonlyMap<string, SessionMeta>, links: TreeLinkInput): Map<string, string | null> {
@@ -377,7 +377,7 @@ export function treeParents(metas: ReadonlyMap<string, SessionMeta>, links: Tree
   return out
 }
 
-/** 패널 나무용 메타 — parent 만 나무 부모로 바꾼다(나머지는 앱 값 그대로) */
+/** 패널 세션 트리용 메타 — parent 만 세션 트리 부모로 바꾼다(나머지는 앱 값 그대로) */
 export function withTree(metas: ReadonlyMap<string, SessionMeta>, links: TreeLinkInput): Map<string, SessionMeta> {
   const parents = treeParents(metas, links)
   const out = new Map<string, SessionMeta>()
@@ -428,7 +428,7 @@ export function roleOf(id: string, tree: ReadonlyMap<string, SessionMeta>, orche
   return up !== null && tree.has(up) ? 'sub' : 'solo'
 }
 
-/** 나무에서 id 와 그 아래 세션(주인 고르기에서 뺄 것 — 고리 막기) */
+/** 세션 트리에서 id 와 그 아래 세션(주인 고르기에서 뺄 것 — 고리 막기) */
 export function subtreeOf(tree: ReadonlyMap<string, SessionMeta>, id: string): Set<string> {
   const out = new Set([id])
   for (let grew = true; grew; ) {
@@ -539,7 +539,7 @@ export function pinWhyOf(v: unknown, isOrche: boolean): PinWhy {
   return isOrche ? 'owner' : 'user'
 }
 
-/** 제목 맨 앞 [범위] 의 글 — 그룹 없는 오케 나무의 사이드바 그룹 이름. 없으면 null */
+/** 제목 맨 앞 [범위] 의 글 — 그룹 없는 오케 세션 트리의 사이드바 그룹 이름. 없으면 null */
 export function scopeOf(title: string): string | null {
   const m = /^\s*\[([^\]]{1,60})\]/.exec(title)
   const s = m ? m[1]!.trim() : ''
@@ -650,7 +650,7 @@ export function buildFamilies(metas: ReadonlyMap<string, SessionMeta>, o: Family
       const limit = o.rowLimit
       const ids = new Set(rows.map(r => r.id))
       const keep = new Set<string>()
-      // 줄 하나를 남기면 그 위 세션도 남긴다 — 나무 모양(깊이)이 끊기지 않게
+      // 줄 하나를 남기면 그 위 세션도 남긴다 — 세션 트리 모양(깊이)이 끊기지 않게
       const add = (id: string | null) => {
         for (let at = id; at !== null && ids.has(at) && !keep.has(at); at = metas.get(at)?.parent ?? null) keep.add(at)
       }
@@ -1469,7 +1469,7 @@ export function roleRuleLine(o: { isLead: boolean; hasGrand: boolean }): string 
 
 export const isLaterOrdinal = (title: string | null | undefined): boolean => typeof title === 'string' && ordinalOf(title).explicit && ordinalOf(title).n >= 2
 
-/** 바로 아래가 아닌 아래 세션(손자 이하 · 살아 있음)이 있나 — 패널 나무 */
+/** 바로 아래가 아닌 아래 세션(손자 이하 · 살아 있음)이 있나 — 패널 세션 트리 */
 export function hasGrandKids(tree: ReadonlyMap<string, SessionMeta>, selfId: string): boolean {
   for (const id of subtreeOf(tree, selfId)) {
     const m = tree.get(id)

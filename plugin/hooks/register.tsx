@@ -869,7 +869,7 @@ async function setReportMode($: EngineInterface, value: string): Promise<void> {
   await update($, appTick, n => n + 1)
 }
 
-// ── 오케 나무 기록 — $.store 에 세션마다 열쇠(두 세션이 같이 눌러도 안 덮음). 노트: register.md#links ──────────────
+// ── 오케 세션 트리 기록 — $.store 에 세션마다 열쇠(두 세션이 같이 눌러도 안 덮음). 노트: register.md#links ──────────────
 const OWNER_PREFIX = 'owner:'
 const SUCC_PREFIX = 'succ:'
 const ORCHE_PREFIX = 'orche:'
@@ -1746,7 +1746,7 @@ async function loadQuickView($: EngineInterface, surface?: string): Promise<{ q:
   return s ? { q: { self: s.metas.get(s.selfId)! }, isApp: await canUseApp($, s, surface) } : null
 }
 
-/** 나무 묶음으로 패널을 따라 연다(같은 맨 위 세션 아래 세션끼리 — 떼어 낸 곁가지도 주인 패널을 따라 연다, 0.1.3) — msg 묶음 대신 */
+/** 세션 트리 묶음으로 패널을 따라 연다(같은 맨 위 세션 아래 세션끼리 — 떼어 낸 곁가지도 주인 패널을 따라 연다, 0.1.3) — msg 묶음 대신 */
 async function appGroup($: EngineInterface): Promise<string | null> {
   const s = await appSelf($)
   if (!s) return null
@@ -2062,7 +2062,7 @@ async function firstSetupAct($: EngineInterface, pick: 'rec' | 'app'): Promise<v
     await setAutoPin($, true)
     await setSwitch($, AUTO_UNPIN_KEY, true)
     await setSwitch($, AUTO_GROUP_KEY, true)
-    // 그룹 스위치를 켤 때와 같이 이 세션 세션 트리를 한 번 맞춘다(bypass 만 — groupTree)
+    // 그룹 스위치를 켤 때와 같이 이 세션의 세션 트리를 한 번 맞춘다(bypass 만 — groupTree)
     void groupOwnTree($).catch(() => {})
     toast($, L('추천 설정을 켰습니다 — [설정] 「새 자식 세션」에서 바꿀 수 있습니다', 'Turned on the recommended settings — change them in Settings → New child sessions'), true)
   }
@@ -2132,7 +2132,7 @@ async function humanAnswered($: EngineInterface): Promise<void> {
   await update($, rulesTurn, t => (t.asked.length === 0 ? t : { ...t, ok: [...new Set([...t.ok, ...t.asked])], asked: [] }))
 }
 
-/** 패널 나무의 위 세션(살아 있는 것) — 관계 줄 「위 · 제목」 · selfRole 과 같은 셈 */
+/** 패널 세션 트리의 위 세션(살아 있는 것) — 관계 줄 「위 · 제목」 · selfRole 과 같은 셈 */
 function aliveUp(tree: ReadonlyMap<string, SessionMeta>, selfId: string): SessionMeta | null {
   const up = tree.get(selfId)?.parent ?? null
   const m = up !== null ? tree.get(up) : undefined
@@ -2155,7 +2155,7 @@ function lineOr<T>($: EngineInterface, what: string, f: () => T): T | null {
   }
 }
 
-// 세션 규칙 스위치 뒤 · 앱 자료 · 나무는 한 번 읽고 · 줄마다 실패하면 그 줄만 뺀다. allow = 힌트로 보내라고 한 위 세션(보내기 확인이 막지 않게)
+// 세션 규칙 스위치 뒤 · 앱 자료 · 세션 트리는 한 번 읽고 · 줄마다 실패하면 그 줄만 뺀다. allow = 힌트로 보내라고 한 위 세션(보내기 확인이 막지 않게)
 async function turnLines($: EngineInterface, kind: string | undefined, text: string): Promise<{ lines: string[]; allow: string[] }> {
   const isHuman = kind === 'composer' || kind === 'bridge'
   if ((!isHuman && kind !== 'sdk') || !(await rulesOn($))) return { lines: [], allow: [] }
@@ -3104,8 +3104,8 @@ async function fileInto($: EngineInterface, ids: readonly string[], group: strin
 }
 
 // 다른 그룹에 둔 세션(사람이 넣은 주제 그룹)은 안 옮긴다 — 그룹 없는 세션만. 설정이 켜졌고 bypass 세션일 때만(앱 동작)
-// 기준은 나무 뿌리(패널 나무로 가장 위 살아 있는 세션) — 곁가지가 자식을 열어도 곁가지 이름 그룹을 만들지 않는다(0.1.6 출고 뒤 advisor 가 잡음:
-// 그룹 없는 메인 오케 나무의 곁가지 「[관리 프로그램 칸 내용] …」가 자식을 열면 그 이름 그룹이 생겨 나무가 갈라질 뻔했다)
+// 기준은 세션 트리 뿌리(패널 세션 트리로 가장 위 살아 있는 세션) — 곁가지가 자식을 열어도 곁가지 이름 그룹을 만들지 않는다(0.1.6 출고 뒤 advisor 가 잡음:
+// 그룹 없는 메인 오케 세션 트리의 곁가지 「[관리 프로그램 칸 내용] …」가 자식을 열면 그 이름 그룹이 생겨 세션 트리가 갈라질 뻔했다)
 async function groupTree($: EngineInterface, ownerId: string, ids: readonly string[]): Promise<void> {
   if (!(await storeOn($, AUTO_GROUP_KEY)) || !(await isBypass($))) return
   const selfId = await selfAppId($)
@@ -3124,7 +3124,7 @@ async function groupTree($: EngineInterface, ownerId: string, ids: readonly stri
   let group = top.group
   let members = [ownerId, ...ids]
   if (group === null) {
-    // 뿌리에 그룹이 없으면 뿌리 [범위] 이름 그룹을 찾거나 만들어 뿌리 · 그 나무의 그룹 없는 살아 있는 세션을 다 넣는다(나무가 갈라지지 않게)
+    // 뿌리에 그룹이 없으면 뿌리 [범위] 이름 그룹을 찾거나 만들어 뿌리 · 그 세션 트리의 그룹 없는 살아 있는 세션을 다 넣는다(세션 트리가 갈라지지 않게)
     const name = scopeOf(top.title)
     group = name ? await groupNamed($, name) : null
     if (group === null) return
@@ -3152,7 +3152,7 @@ async function regroupDetached($: EngineInterface, before: ReadonlyMap<string, S
   for (const [group, ids] of byGroup) await fileInto($, ids, group, pinned, selfId)
 }
 
-/** 스위치를 켤 때 한 번 — 이 세션 나무(이 세션이 주인인 묶음)를 그룹으로 */
+/** 스위치를 켤 때 한 번 — 이 세션의 세션 트리(이 세션이 주인인 묶음)를 그룹으로 */
 async function groupOwnTree($: EngineInterface): Promise<void> {
   const s = await appSelf($)
   if (!s) return
@@ -3163,7 +3163,7 @@ async function groupOwnTree($: EngineInterface): Promise<void> {
 
 // ── 세션 정리(0.1.6 — 사용자 11-04 02:1x 「끝 신호 = 진행판 끝 줄」 · 「정리 = 보관 세션 몫 + 실측 자료」). 노트: register.md#sessionClean ──
 
-/** 끝난 곁가지 — 이 세션 나무 아래(패널 나무) 끝남 기록이 있는 살아 있는 세션, 늦게 끝난 차례. attached = 보관하면 같이 보관될 붙은 세션 수 */
+/** 끝난 곁가지 — 이 세션의 세션 트리 아래(패널 세션 트리) 끝남 기록이 있는 살아 있는 세션, 늦게 끝난 차례. attached = 보관하면 같이 보관될 붙은 세션 수 */
 function endedKidsOf(tree: ReadonlyMap<string, SessionMeta>, metas: ReadonlyMap<string, SessionMeta>, ended: ReadonlyMap<string, EndRecord>, selfId: string): EndedKid[] {
   const out: EndedKid[] = []
   for (const id of subtreeOf(tree, selfId)) {
@@ -3175,7 +3175,7 @@ function endedKidsOf(tree: ReadonlyMap<string, SessionMeta>, metas: ReadonlyMap<
   return out.sort((a, b) => b.at - a.at)
 }
 
-/** 이 세션 위(패널 나무)에서 가장 가까운 오케의 진행판 */
+/** 이 세션 위(패널 세션 트리)에서 가장 가까운 오케의 진행판 */
 async function upBoard($: EngineInterface, tree: ReadonlyMap<string, SessionMeta>, orche: ReadonlySet<string>, from: string | null): Promise<{ path: string; owner: string } | null> {
   const seen = new Set<string>()
   for (let at = from; at !== null && !seen.has(at); at = tree.get(at)?.parent ?? null) {
@@ -3261,7 +3261,7 @@ const CLEAN_TOP = (): string[] => [
   ),
 ]
 
-/** 이 세션 역할(패널 나무 · 오케 표시로 — meta.md#roleOf) */
+/** 이 세션 역할(패널 세션 트리 · 오케 표시로 — meta.md#roleOf) */
 async function selfRole($: EngineInterface): Promise<{ selfId: string; role: SessionRole; up: string | null; tree: Map<string, SessionMeta> } | null> {
   const s = await sessionSelf($)
   if (!s) return null
@@ -3582,7 +3582,7 @@ async function orcheAct($: EngineInterface, id: string, on: boolean): Promise<vo
   if (on && id === (await selfAppId($))) await groupOwnTree($)
 }
 
-// 채팅 카드(offer)를 띄운다. 나무는 새 세션 제목이 다음 차수면 넘어간다
+// 채팅 카드(offer)를 띄운다. 세션 트리는 새 세션 제목이 다음 차수면 넘어간다
 const HANDOFF_ASK = (): string =>
   L(
     [
@@ -3828,7 +3828,7 @@ async function bumpTick($: EngineInterface): Promise<void> {
   sig += `|q${[...quick].join(',')}|w${String(isWorking)}`
   if (quick.has('send')) sig += `|z${signalOf((await $.prompt.read().catch(() => null))?.text ?? '')?.word ?? ''}`
   for (const [id, on] of await reportSwitches($)) sig += `|r${id}:${String(on)}`
-  // 오케 나무 기록 · 진행판 · advisor 공용 파일 — 바뀌면 나무 · 새 줄 수 · 금액을 다시 그린다(0.1.3)
+  // 오케 세션 트리 기록 · 진행판 · advisor 공용 파일 — 바뀌면 세션 트리 · 새 줄 수 · 금액을 다시 그린다(0.1.3)
   sig += linksSig(await storeLinks($))
   const b = await readBoard($, selfId)
   if (b) sig += `|b${(await $.fs.stat(b.path).catch(() => null))?.mtimeMs ?? 0}:${b.seen.length}`
@@ -4183,7 +4183,7 @@ export const register: Register = on => {
       await (isPin ? setAutoPin($, isOn) : setAutoDetach($, isOn))
       return { props: { on: isOn, disabled: false } }
     }
-    // 끝나면 고정 풀기 · 사이드바 그룹으로(0.1.6) — 그룹은 켤 때 이 세션 나무를 한 번 맞춘다
+    // 끝나면 고정 풀기 · 사이드바 그룹으로(0.1.6) — 그룹은 켤 때 이 세션의 세션 트리를 한 번 맞춘다
     if (e.element === AUTO_SWITCH.unpin || e.element === AUTO_SWITCH.group) {
       const key = e.element === AUTO_SWITCH.unpin ? AUTO_UNPIN_KEY : AUTO_GROUP_KEY
       const isOn = !(await storeOn($, key))

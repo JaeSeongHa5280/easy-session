@@ -46,7 +46,7 @@ export type SessionMeta = {
   title: string
   cli: string | null
   cwd: string | null
-  /** 앱이 붙인 부모 — 떼어 내면 null(자식 보고 물려받기 · 앱 동작 기준). 패널 나무는 `treeParents` 로 따로(노트 meta.md#treeParents) */
+  /** 앱이 붙인 부모 — 떼어 내면 null(자식 보고 물려받기 · 앱 동작 기준). 패널 세션 트리는 `treeParents` 로 따로(노트 meta.md#treeParents) */
   parent: string | null
   /** spawnedFrom.sessionId — 떼어 내도 남는 원래 부모 */
   from: string | null
@@ -93,7 +93,7 @@ export type RegistryEntry = {
 
 /**
  * 「다른 세션」 칸의 지금 열린 세션 한 줄(0.1.28 — 등록부 · 데스크톱 앱 세션 기록). id = 그리기 · 보낼 칸 열쇠(데스크톱 세션은 앱 id, 그 밖은 엔진 세션 번호) ·
- * to = 보낼 주소(엔진 세션 번호 — `{ sessionId }`) · tag = 제목 뒤 표지(메인 · 오케 · 없음) · depth = 데스크톱 나무 깊이 · canGo = [가기](데스크톱 세션만). 노트 meta.md#openRows
+ * to = 보낼 주소(엔진 세션 번호 — `{ sessionId }`) · tag = 제목 뒤 표지(메인 · 오케 · 없음) · depth = 데스크톱 세션 트리 깊이 · canGo = [가기](데스크톱 세션만). 노트 meta.md#openRows
  */
 export type OpenRow = { id: string; to: string; title: string; tag: string | null; depth: number; canGo: boolean }
 
@@ -122,7 +122,7 @@ export type SentRow = { to: string; title: string; sentAt: number; state: SentSt
 /** easy-session 이 적는 끝남 기록 — <자료 폴더>/sessions/<앱 세션 id>.json */
 export type EndRecord = { ended: true; summary: string; by: 'self' | 'user'; at: number }
 
-/** 할 일 「끝난 곁가지」 한 줄(0.1.6) — 이 세션 나무 아래 끝남 기록이 있는 살아 있는 세션. attached = 보관하면 같이 보관될 붙은 세션 수 */
+/** 할 일 「끝난 곁가지」 한 줄(0.1.6) — 이 세션의 세션 트리 아래 끝남 기록이 있는 살아 있는 세션. attached = 보관하면 같이 보관될 붙은 세션 수 */
 export type EndedKid = { id: string; title: string; summary: string; at: number; attached: number }
 
 /** [전체] 「정리」 칸의 마지막 셈(0.1.6) — 보관된 세션이 남긴 스크래치(살아 있는 세션 것 · md 가 가리키는 것 뺌). at null = 아직 안 셈 */
@@ -166,7 +166,7 @@ export type FamilyRow = {
   pinWhy: 'owner' | 'child' | 'user' | null
 }
 
-/** 패널 나무를 그리는 이지 세션 기록($.store) — 주인 덮어쓰기(owner:<id> = 세션 id · 'top') · 인계(succ:<옛 주인> = 뒤 주인) · 오케(orche:<id>). 노트 meta.md#treeParents */
+/** 패널 세션 트리를 그리는 이지 세션 기록($.store) — 주인 덮어쓰기(owner:<id> = 세션 id · 'top') · 인계(succ:<옛 주인> = 뒤 주인) · 오케(orche:<id>). 노트 meta.md#treeParents */
 export type TreeLinks = { owners: ReadonlyMap<string, string>; succ: ReadonlyMap<string, string>; orche: ReadonlySet<string> }
 
 /** 오케의 진행판 — <자료 폴더>/boards/<오케 id>.json(경로 · 본 줄 앞 60자 모음). 경로가 빈 글이면 안 정함. 노트 meta.md#board */
@@ -224,8 +224,8 @@ export type OutItem = { to: string; title: string; text: string; at: number }
 export type PeerSender = { from: string | null; session: string | null; name: string | null }
 
 /**
- * 보낸 세션과 이 세션의 관계(패널 나무 기준) — up 바로 위 · upFar 위쪽이지만 바로 위는 아님(via = 바로 위 세션 제목, isCrown = 보낸 세션이 오케) ·
- * down 아래 · tree 같은 나무의 다른 세션 · other 다른 나무 · unknown 세션 목록에 없음. 노트 meta.md#peerRel
+ * 보낸 세션과 이 세션의 관계(패널 세션 트리 기준) — up 바로 위 · upFar 위쪽이지만 바로 위는 아님(via = 바로 위 세션 제목, isCrown = 보낸 세션이 오케) ·
+ * down 아래 · tree 같은 세션 트리의 다른 세션 · other 다른 세션 트리 · unknown 세션 목록에 없음. 노트 meta.md#peerRel
  */
 export type PeerRel =
   | { kind: 'up' | 'down' | 'tree' | 'other'; title: string }
