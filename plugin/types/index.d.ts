@@ -1,16 +1,7 @@
-/** 띠에 버튼 하나로 그려지는 세션 */
+/** 앱 딥링크로 옮겨 갈 세션(go) */
 export type NavNode = { alias: string; label: string; sessionId: string; isDone: boolean }
 
-/** 이 세션 기준의 트리 조각: 위로 루트까지의 길, 자기, 바로 아래 자식 */
-export type Nav = { path: NavNode[]; self: NavNode; children: NavNode[]; doneChildren: number }
-
-/** 트리 한 줄: 깊이만큼 들여 그린다. doneChildren 은 숨긴 완료 자식 수 */
-export type TreeRow = NavNode & { depth: number; isSelf: boolean; doneChildren: number }
-
-/** msg 레지스트리 group 하나의 진행 중 트리(루트부터 깊이 우선 순서) */
-export type TreeGroup = { group: string; rows: TreeRow[] }
-
-/** $.store 'pane': 트리 패널을 연 그룹. 같은 그룹 세션만 따라 연다(관계없는 세션엔 안 뜬다) */
+/** $.store 'pane': 패널을 연 묶음. 같은 묶음 세션만 따라 연다(관계없는 세션엔 안 뜬다) */
 export type StoredPane = { group: string | null }
 
 /** 이 계정의 요금 갈래 — 'sub' 구독(5시간 · 7일 창이 옴), 'rate' 토큰마다 요금(응답이 있었는데 창이 없음). 노트 register.md#plan */
@@ -70,6 +61,8 @@ export type SessionMeta = {
   queued?: QueuedNote[]
   /** 앱이 센 끝난 차례 수(completedTurns) — 없으면 칸 없음. 첫 차례 판정(register.md#turnLines) */
   turnsDone?: number
+  /** 예약 작업이 연 세션(앱 메타 scheduledTaskId — 사람 없는 세션, 0.1.31 8b). 아니면 칸 없음. 노트 meta.md#modeMatch */
+  isScheduled?: boolean
   oddFields: number
 }
 
@@ -237,16 +230,18 @@ export type PeerRel =
 /**
  * 보내기 확인(0.1.27 msg 규칙 R1 · R2) — 본 대화 차례 하나의 기록($.state). isHuman = 이 차례에 사람 글(composer · bridge)이 있음 · places = 이 차례에 센 서로 다른 곳 ·
  * asked = 막고 물으라고 한 곳(사람이 답할 때까지 남음) · ok = 사람이 답해 이 차례에 통과하는 곳 · allow = 사용자가 시킨 보내기(이지 세션이 채운 글 · >> 신호)의 곳. 곳 = 세션 id(못 풀린 곳은 「?」+ 입력 글).
+ * cold = 오래 쉰 세션이라 이 차례에 한 번 막은 곳(0.1.31 H2 — 같은 차례 같은 곳 다시 보내면 통과, 차례마다 비움). 없으면 빈 목록으로 본다.
  * 노트 register.md#sendRules
  */
-export type RulesTurn = { isHuman: boolean; places: string[]; asked: string[]; ok: string[]; allow: string[] }
+export type RulesTurn = { isHuman: boolean; places: string[]; asked: string[]; ok: string[]; allow: string[]; cold?: string[] }
 
 /** prompt.submit 이 적어 두고 다음 본 대화 turn.start 가 가져가는 것(그 차례를 시작한 글) — 노트 register.md#sendRules */
 export type RulesPending = { isHuman: boolean; allow: string[] }
 
 /** 받는 곳(0.1.27 msg 규칙) — id = 풀린 앱 세션 id(못 풀면 null), key = 세는 열쇠, title = 까닭 글에 쓸 이름. 노트 meta.md#sendPlace */
 /** alt = 같은 곳의 다른 주소(등록부 항목 — uds: 통로 · 엔진 세션 번호 · 이름, 0.1.28 ⑦) — 시킨 곳 · 물은 곳 맞추기에 */
-export type SendPlace = { id: string | null; key: string; title: string; alt?: string[] }
+/** dups = 제목 · 짧은 이름이 같은 살아 있는 세션이 둘 이상(0.1.31 H3) — n 개 중 최근 순 셋까지의 id. 있으면 늘 막는다(id 로 다시 보내라) */
+export type SendPlace = { id: string | null; key: string; title: string; alt?: string[]; dups?: { n: number; ids: string[] } }
 
 /** 한 세션의 자식 보고 켬 · 끔 — 그 세션에서 정한 값, 아니면 가장 가까운 위 세션 값(from), 아니면 처음 값 */
 export type ReportState = { on: boolean; isSet: boolean; from: string | null }
@@ -269,7 +264,27 @@ export type PanelUi = {
   card: string | null
   draft: string
   folds: string[]
-  ask: 'end' | 'archive' | 'trash' | null
+  /** 묻는 중 — 끝내기 · 보관 · 휴지통 · 0.1.31 8c [모두 거절](모아 둔 메시지 칸 맨 위 — 한 번 묻고 지움) */
+  ask: 'end' | 'archive' | 'trash' | 'rejectAll' | null
+  /** 0.1.31 ⑧ 보관 · 끝내기 전 남은 메시지 묻기(누를 때 센 값 — 그릴 때 파일을 안 읽는다). ⑦ 정리는 붙은 세션도. 없으면 null */
+  pre?: PreAsk | null
+  /** 0.1.31 8b ⓐ 패널 [보내기]가 막히는 칸(받는 쪽 권한 무시 · plan, 이 세션 그 밖)일 때 보낼 칸 자리의 고르기(누를 때 센 값). 없으면 null */
+  match?: MatchAsk | null
+  /** 0.1.31 8b ⓑ [하위 모두 자동으로] 뒤 트리로만 묶인 권한 무시 하위(이 세션이 연 세션이 아님) — 묻기 카드 하나로 묶어 묻는 중. 없으면 null */
+  kidsAsk?: string[] | null
+}
+
+/** 8b ⓐ 고르기 재료 — text = 보낼 글, busy = 받는 곳이 일하는 중(엔진 등록부), isOwnKid = 이 세션이 연 하위(앱 부모), confirm = 남의 세션 내리기 한 번 더 묻는 중. 노트 register.md#modeMatch */
+export type MatchAsk = { id: string; text: string; fromMode: string; toMode: string; busy: boolean; isOwnKid: boolean; confirm: boolean }
+
+/** 일하는 중인 세션을 그 차례가 끝난 뒤 자동으로 내리기(8b ⓐ [끝나면 내리고 보내기] · ⓑ [하위 모두 자동으로]) — text 가 있으면 내린 뒤 보낸다. 노트 register.md#lowerQueue */
+export type LowerJob = { id: string; text: string | null; at: number }
+
+/** ⑧ 묻기 카드 재료 — act = 줄 [보관] · [끝내기] · [정리](끝난 하위 모두), rows = 남은 메시지나 붙은 세션이 있는 세션만. 노트 register.md#leftover */
+export type PreAsk = {
+  act: 'archive' | 'finish' | 'tidy'
+  ids: string[]
+  rows: { id: string; title: string; inN: number; outN: number; attached: number }[]
 }
 
 /**
@@ -304,10 +319,6 @@ declare module 'claude-code' {
       panelUi: PanelUi
       /** 앱 메타가 바뀌면(또는 1분마다) 올린다 — 그리는 쪽이 읽어 다시 그린다 */
       appTick: number
-      nav: Nav | null
-      tree: TreeGroup[]
-      /** /easy-session as <별칭> — 이 세션을 그 별칭인 것처럼 미리보기 */
-      previewAlias: string | null
       selfGroup: string | null
       /** 이 세션에 트리 패널을 열어 두었는가 */
       isOpen: boolean

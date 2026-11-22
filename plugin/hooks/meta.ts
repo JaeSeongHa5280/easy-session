@@ -207,6 +207,7 @@ export function slimMeta(raw: unknown, id: string): SessionMeta | null {
     receipts,
     ...(queued.length > 0 && { queued }),
     ...(turnsDone !== null && { turnsDone }),
+    ...(field(m.scheduledTaskId, str) !== null && { isScheduled: true }),
     oddFields: odd,
   }
 }
@@ -1087,6 +1088,157 @@ export function findHits(metas: ReadonlyMap<string, SessionMeta>, text: string, 
     .sort(byRecent)
 }
 
+// ── 0.1.31 ① 글에 나온 세션 정보 한 줄 · ② 끝난 듯 · 권한 모드 이름 — 노트: meta.md#mention · meta.md#ending · meta.md#modeName ──────────────
+
+/** 권한 모드 이름 — 앱 Code 탭 메뉴 이름(한글: 수동 · 편집 자동 수락 · 계획 · 자동 · 권한 무시 · 묻지 않음 / 영어: Manual · Accept edits · Plan · Auto · Bypass permissions · Don't ask) */
+const MODE_NAMES: Readonly<Record<string, readonly [string, string]>> = {
+  default: ['수동', 'Manual'],
+  acceptEdits: ['편집 자동 수락', 'Accept edits'],
+  plan: ['계획', 'Plan'],
+  auto: ['자동', 'Auto'],
+  bypassPermissions: ['권한 무시', 'Bypass permissions'],
+  dontAsk: ['묻지 않음', "Don't ask"],
+}
+
+export function modeName(mode: string | null | undefined): string | null {
+  if (!mode) return null
+  const n = MODE_NAMES[mode]
+  return n ? L(n[0], n[1]) : mode
+}
+
+/** ① 한 글에 붙이는 세션 수 · 한 세션 줄 상한 · [범위]를 뗀 제목으로 맞출 최소 글자 수 · 제목 전체로 맞출 최소 열쇠 길이 */
+export const MENTION_MAX = 3
+export const MENTION_LINE_MAX = 300
+const MENTION_BARE_MIN = 6
+const MENTION_FULL_MIN = 4
+export const MENTION_TAG = (): string => L('[easy-session 세션]', '[easy-session session]')
+
+/** 짧은 이름이 낱말로 들어 있나(앞뒤가 글자 · 숫자 · _ · - 가 아님) — 「kid」가 「kidney」에 안 맞게 */
+function nameIn(text: string, name: string): boolean {
+  const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`(^|[^\\p{L}\\p{N}_-])${esc}($|[^\\p{L}\\p{N}_-])`, 'iu').test(text)
+}
+
+// 짧은 이름(낱말로). 살아 있는 세션만 · 이 세션 뺌 · 최근 활동 순 셋까지. 부분 낱말(줄여 말함)은 안 맞춤(틀린 세션을 붙일 위험 — 명세 ★)
+export function mentionHits(text: string, selfId: string, metas: ReadonlyMap<string, SessionMeta>): SessionMeta[] {
+  const own = ownWords(text)
+  const key = titleKey(own)
+  if (key === '') return []
+  return liveMetas(metas)
+    .filter(m => {
+      if (m.id === selfId) return false
+      const full = titleKey(m.title)
+      if (full.length >= MENTION_FULL_MIN && key.includes(full)) return true
+      const bare = m.title.replace(/^\s*\[[^\]]*\]\s*/, '').trim()
+      if (bare !== m.title.trim() && [...bare].length >= MENTION_BARE_MIN && key.includes(titleKey(bare))) return true
+      return m.name !== undefined && nameIn(own, m.name)
+    })
+    .sort(byRecent)
+    .slice(0, MENTION_MAX)
+}
+
+/** ① 줄 재료 — 패널 세션 트리(위 · 아래) · 끝남 기록 · 끝난 듯 후보 · 도는 중(엔진 등록부 busy) */
+export type MentionFacts = { now: number; tree: ReadonlyMap<string, SessionMeta>; ended: ReadonlyMap<string, unknown>; ending: ReadonlySet<string>; busy: ReadonlySet<string> }
+
+const cutText = (s: string, max: number): string => {
+  const one = s.replace(/\s+/g, ' ').trim()
+  return [...one].length > max ? `${[...one].slice(0, max).join('')}…` : one
+}
+
+// 상태 <분류> — <요약 80자> · 할 일 <60자> · <끝남 | 끝난 듯>. 없는 칸은 뺌 · 한 세션 300자 안
+export function mentionLine(m: SessionMeta, f: MentionFacts): string {
+  const parts: string[] = [`「${cutText(m.title, PEER_TITLE_MAX)}」 ${m.id}`]
+  const mode = modeName(m.mode)
+  if (mode) parts.push(mode)
+  if (f.busy.has(m.id)) parts.push(L('도는 중', 'running'))
+  else if (m.lastAt !== null) {
+    const [clock, ago] = whenText(m.lastAt, f.now).split(' · ')
+    parts.push(L(`쉼 ${clock}(${ago})`, `idle since ${clock} (${ago})`))
+  }
+  if (m.isStarred) parts.push(L('고정', 'pinned'))
+  const up = f.tree.get(m.id)?.parent ?? null
+  const upMeta = up !== null ? f.tree.get(up) : undefined
+  if (upMeta) parts.push(L(`위 「${cutText(upMeta.title, 40)}」`, `above 「${cutText(upMeta.title, 40)}」`))
+  const below = [...f.tree.values()].filter(x => x.parent === m.id && !x.isArchived).length
+  if (below > 0) parts.push(L(`아래 ${below}`, `${below} below`))
+  if (m.status) parts.push(`${L('상태', 'status')} ${m.status}${m.detail ? ` — ${cutText(m.detail, 80)}` : ''}`)
+  if (m.needs) parts.push(`${L('할 일', 'to do')} ${cutText(m.needs, 60)}`)
+  if (f.ended.has(m.id)) parts.push(L('끝남', 'ended'))
+  else if (f.ending.has(m.id)) parts.push(L('끝난 듯', 'looks done'))
+  const line = `${MENTION_TAG()} ${parts.join(' · ')}`
+  return [...line].length > MENTION_LINE_MAX ? `${[...line].slice(0, MENTION_LINE_MAX - 1).join('')}…` : line
+}
+
+/** ② 끝 두 줄을 찾는 끝쪽 줄 수 · 요지 길이 */
+const ENDING_TAIL_LINES = 8
+export const ENDING_GIST_MAX = 160
+
+// 아니면 null. 줄 앞 목록 표 · 굵게 · 따옴표 꾸밈은 뗀다
+export function endingOf(answer: string): { gist: string } | null {
+  const lines = answer
+    .split(/\r?\n/)
+    .map(l => l.replace(/[*_`]/g, '').replace(/^[\s>•·-]+/, '').trim())
+    .filter(l => l !== '')
+  const tail = lines.slice(-ENDING_TAIL_LINES)
+  const valueOf = (re: RegExp): string | null => {
+    for (let i = tail.length - 1; i >= 0; i--) {
+      const m = re.exec(tail[i]!)
+      if (m) return m[1]!.trim()
+    }
+    return null
+  }
+  const none = (v: string | null) => v !== null && /^(없음|none)[.。!]?$/i.test(v)
+  if (!none(valueOf(/^(?:남은 것|Remaining)\s*[:：]\s*(.*)$/i)) || !none(valueOf(/^(?:결정할 것|Decisions?)\s*[:：]\s*(.*)$/i))) return null
+  return { gist: cutText(lines[0] ?? '', ENDING_GIST_MAX) }
+}
+
+// inKeys = 그 세션이 보낸 글 가운데 이 세션 받은 칸에 남은 것(누를 때 내보낸 칸을 먼저 가져온 뒤 — 한 곳만 센다).
+// outN = 이 세션이 그 세션에 보낸 글 가운데 안 읽힌 것: 그 세션 받은 칸에 남은 내 글 + 그 세션이 아직 안 가져간 내 내보낸 칸(took 뒤) + 앱 도착 기록의 보냄 · 도착(읽음 전).
+// 내보낸 칸은 받는 쪽이 가져가도 안 줄어(마지막 8개) took 와 견주지 않으면 받은 카드를 다시 센다
+export function leftoverOf(id: string, selfId: string, mine: HeldBox | null, theirs: HeldBox | null, out: readonly OutItem[], receipts: readonly Receipt[]): { inKeys: string[]; outN: number } {
+  const inKeys = (mine?.items ?? []).filter(r => r.from === id).map(heldKey)
+  const theirsFromMe = (theirs?.items ?? []).filter(r => r.from === selfId).length
+  const took = theirs?.took?.[selfId] ?? 0
+  const untaken = out.filter(i => i.to === id && i.at > took).length
+  const unread = receipts.filter(r => r.to === id && (receiptState(r) === 'sent' || receiptState(r) === 'delivered')).length
+  return { inKeys, outN: theirsFromMe + untaken + unread }
+}
+
+/** ⑧ 남은 메시지를 고른 뒤 끝남 기록 파일에 남기는 칸 — took 받음 · dropped 지움 · kept 남김 · unread 보낸 글 안 읽힌 채 */
+export type LeftMsgs = { took: number; dropped: number; kept: number; unread: number }
+
+export function endFileText(old: string | null, patch: Readonly<Record<string, unknown>>): string {
+  let base: Obj = {}
+  try {
+    base = obj(JSON.parse(old ?? '')) ?? {}
+  } catch {
+    base = {}
+  }
+  return `${JSON.stringify({ ...base, ...patch })}\n`
+}
+
+export function leftoverLine(act: 'archive' | 'finish', title: string, m: LeftMsgs): string {
+  const parts: string[] = []
+  if (m.took > 0) parts.push(L(`받은 글 ${m.took} 받음`, `took ${m.took} received`))
+  if (m.dropped > 0) parts.push(L(`받은 글 ${m.dropped} 지움`, `deleted ${m.dropped} received`))
+  if (m.kept > 0) parts.push(L(`받은 글 ${m.kept} 남김`, `kept ${m.kept} received`))
+  if (m.unread > 0) parts.push(L(`보낸 글 ${m.unread} 안 읽힌 채 닫음`, `${m.unread} sent unread`))
+  const head = act === 'finish' ? L('끝내기', 'End') : L('보관', 'Archive')
+  return `${head}: ${title}${parts.length > 0 ? ` — ${parts.join(' · ')}` : ''}`
+}
+
+/** ② 끝난 듯 후보 파일 꼴 — 지운 표시(cleared)거나 꼴이 다르면 null */
+export function parseEnding(text: string): { at: number; gist: string } | null {
+  try {
+    const j = obj(JSON.parse(text))
+    if (!j || j.cleared === true) return null
+    const at = num(j.at)
+    return at === null ? null : { at, gist: str(j.gist) ?? '' }
+  } catch {
+    return null
+  }
+}
+
 export function relayWay(selfMode: string | null | undefined, targetMode: string | null | undefined): RelayWay {
   if (selfMode === 'bypassPermissions') return 'direct'
   return targetMode === 'bypassPermissions' || targetMode === 'plan' ? 'card' : 'model'
@@ -1098,6 +1250,43 @@ export function holdRisk(fromMode: string | null | undefined, toMode: string | n
   const from = fromMode === 'bypassPermissions' ? 'bypass' : 'ask'
   const to = toMode === 'bypassPermissions' || toMode === 'plan' ? 'bypass' : 'ask'
   return from !== to
+}
+
+// 앱은 받는 쪽이 권한 무시일 때만 보낸 쪽 모드를 적고 엔진이 짝이 다르면 붙잡는다(엔진 2.1.330 cross-session-inbound — 권한 무시 → 그 밖은 받음). 모드를 모르면 false
+export function blockedCell(fromMode: string | null | undefined, toMode: string | null | undefined): boolean {
+  if (!fromMode || !toMode) return false
+  return fromMode !== 'bypassPermissions' && (toMode === 'bypassPermissions' || toMode === 'plan')
+}
+
+/** 8b ⓐ Claude 가 부른 보내기가 막히는 칸일 때 갈래 — none 그대로 · lastAnswer 끝 답에 적게 · card 이지세션이 카드로 · lowerOwn 자기가 연 하위를 내리고 보내게 · ask 사용자에게 묻게 */
+export type MatchWay = 'none' | 'lastAnswer' | 'card' | 'lowerOwn' | 'ask'
+
+// 그 밖은 사람 없는 세션 → 카드 · 자기가 연 하위이고 권한 무시 → 내리고 보내기 · 나머지 → 사용자에게. plan 받는 곳은 자동으로 「내리기」가 올리기라 내리기 길을 안 낸다(★ advisor)
+export function matchWay(o: { fromMode: string | null | undefined; toMode: string | null | undefined; isParent: boolean; parentHolds: boolean; isOwnKid: boolean; unattended: boolean }): MatchWay {
+  if (!blockedCell(o.fromMode, o.toMode)) return 'none'
+  if (o.isParent) return o.parentHolds ? 'card' : 'lastAnswer'
+  if (o.unattended) return 'card'
+  if (o.isOwnKid && o.toMode === 'bypassPermissions') return 'lowerOwn'
+  return 'ask'
+}
+
+/** 낱말 + 「이라」 · 「라」(받침으로 — 자동이라 · 권한 무시라). 모르는 글자는 「이라」 */
+export const withIra = (word: string): string => `${word}${topicMark(word) === '는' ? '라' : '이라'}`
+
+export function matchDenyText(way: Exclude<MatchWay, 'none'>, o: { title: string; to: string; fromMode: string; toMode: string; busy: boolean }): string {
+  const from = modeName(o.fromMode) ?? o.fromMode
+  const to = modeName(o.toMode) ?? o.toMode
+  const head = L(`easy-session: 받는 곳 「${o.title}」${topicMark(o.title)} ${to}이고 이 세션은 ${withIra(from)}, 이 SendMessage 는 앱이 붙잡아 몇 분 뒤 버립니다(데스크톱엔 승인 창이 없음).`, `easy-session: the receiver 「${o.title}」 is in ${to} and this session is in ${from}, so the app holds this SendMessage and drops it after a few minutes (the desktop app has no approval prompt for it).`)
+  switch (way) {
+    case 'lastAnswer':
+      return `${head} ${L('보내지 말고 이 글을 이 차례 끝 답에 적으세요 — 그 세션이 이 세션을 연 세션이라 앱이 차례 끝 보고로 넘기고, 그 보고는 붙잡히지 않습니다. 길면 파일에 쓰고 경로를 적으세요.', "Don't send it — write it in this turn's last answer instead: that session opened this one, so the app passes the last answer up as the turn-end report, which isn't held. If it's long, write it to a file and give the path.")}`
+    case 'card':
+      return `${head} ${L('easy-session 이 이 글을 그 세션 패널에 카드로 남겼습니다(거기서 수락하면 처리) — 다시 보내지 마세요.', "easy-session left this message as a card in that session's panel (it runs once accepted there) — don't send it again.")}`
+    case 'lowerOwn':
+      return `${head} ${L(`먼저 set_session_permission_mode(session_id "${o.to}", mode "auto")로 그 세션을 자동으로 내린 뒤 같은 SendMessage 를 다시 하세요 — 이 세션이 연 세션을 내리는 것이라 승인 카드가 없습니다.`, `First lower that session to Auto with set_session_permission_mode(session_id "${o.to}", mode "auto"), then send the same SendMessage again — it's a session this one opened, so there's no approval card.`)}${o.busy ? ` ${L('그 세션은 지금 일하는 중입니다 — 차례 중간에 내리면 하던 일이 검사를 받기 시작해 막힐 수 있으니 그 차례가 끝난 뒤 내리세요. 급하면 사용자에게 물으세요.', "That session is working right now — lowering it mid-turn starts checks on what it's doing and may block it, so lower it once its turn ends. If it's urgent, ask the user.")}` : ''}`
+    case 'ask':
+      return `${head} ${L('보내기 전에 사용자에게 고르게 하세요:', 'Before sending, ask the user to pick:')} ${o.toMode === 'bypassPermissions' ? L('① 그 세션을 자동으로 내리고 보내기(set_session_permission_mode — 이 세션이 연 세션이 아니라 앱이 먼저 묻습니다) ② ', '① lower that session to Auto, then send (set_session_permission_mode — it is not a session this one opened, so the app asks first) ② ') : ''}${L('카드로 보내기(사용자가 easy-session 패널에서 그 세션 줄 [보내기] → [카드로 보내기]를 누르면 그 세션 패널에 카드로 남습니다).', "leave it as a card (the user presses Send on that session's row in the easy-session panel, then Send as a card, and it waits as a card in that session's panel).")}`
+  }
 }
 
 /** 붙잡힐 수 있음 한 줄(0.1.29 ④ F7 — 명세 확정 글) — 지시 글 · 알림 · 그 차례 모델 글. 마우스 올림 글은 짧은 꼴(HOLD_SHORT) */
@@ -1321,15 +1510,22 @@ export function sendPlaceOf(
     if (ids.length === 1) return hit(ids[0]!)
     return /^local_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(word) ? hit(word) : miss()
   }
-  // 살아 있는 세션 하나로 풀리면 그것, 살아 있는 것이 없고 보관된 세션 하나로 풀리면 그것(R1 이 막는다)
-  const pick = (match: (m: SessionMeta) => boolean): string | null => {
+  // 살아 있는 세션 하나로 풀리면 그것, 살아 있는 것이 없고 보관된 세션 하나로 풀리면 그것(R1 이 막는다).
+  // 0.1.31 H3: 이 세션을 뺀 살아 있는 세션이 둘 이상이면 그 목록(막음 — 앱이 어느 쪽에 보낼지 모름). 이 세션만 맞으면 이 세션(곳 아님)
+  const pick = (match: (m: SessionMeta) => boolean): string | SessionMeta[] | null => {
     const all = [...metas.values()].filter(match)
-    const live = all.filter(m => !m.isArchived)
-    return live.length === 1 ? live[0]!.id : live.length === 0 && all.length === 1 ? all[0]!.id : null
+    const others = all.filter(m => m.id !== selfId)
+    const live = others.filter(m => !m.isArchived)
+    if (live.length === 1) return live[0]!.id
+    if (live.length > 1) return live
+    if (others.length === 1) return others[0]!.id
+    return others.length === 0 && all.length > 0 ? selfId : null
   }
   for (const match of [(m: SessionMeta) => m.title === word, (m: SessionMeta) => m.title.replace(/^\s*\[[^\]]*\]\s*/, '') === word, (m: SessionMeta) => m.name === word]) {
-    const id = pick(match)
-    if (id !== null) return hit(id)
+    const got = pick(match)
+    if (got === null) continue
+    if (typeof got === 'string') return hit(got)
+    return { id: null, key: `=${word}`, title: word, dups: { n: got.length, ids: [...got].sort(byRecent).slice(0, DUP_IDS_MAX).map(m => m.id) } }
   }
   // 앱 제목 · 짧은 이름으로 못 풀면 등록부 이름(엔진이 지은 workspace-70 · claude-3c 꼴 — 하나로 풀릴 때만)
   const byName = regPlaceOf(word, selfId, metas, entries, selfEngine, true)
@@ -1354,19 +1550,54 @@ function regPlaceOf(word: string, selfId: string, metas: ReadonlyMap<string, Ses
   return { id: found.sessionId, key: found.sessionId, title: found.name ?? found.sessionId, alt }
 }
 
-/** 판정 재료 — 받는 곳이 끝난 세션(이지 세션 끝남 기록) · 보관된 세션(앱 메타 · 보관 색인)인가, 곳 열쇠 → 이름 */
-export type SendFacts = { isEnded: boolean; isArchived: boolean; titleOf: (key: string) => string }
+/** 같은 제목 여럿일 때 까닭 글에 적는 후보 id 수(0.1.31 H3 — 최근 순) */
+export const DUP_IDS_MAX = 3
+/** 오래 쉰 받는 곳(0.1.31 H2) — 마지막 활동이 이만큼 지나면 한 번 막고 묻는다. 캐시 1시간(CACHE_TTL_MS)과 같은 값 · 설정 칸 없음(세션 규칙 스위치로 같이 꺼짐) */
+export const COLD_SEND_MS = CACHE_TTL_MS
 
-// R1 끝난 · 보관된 세션 → R2 이 차례 세 번째 다른 곳 → 그 밖은 셈에 넣고 통과. 막으면 그 곳을 「물은 곳」(asked)에 적는다. 까닭 꼬리는 사람 차례면 묻기, 아니면 진행판
+/** 판정 재료 — 받는 곳이 끝난 세션(이지 세션 끝남 기록) · 보관된 세션(앱 메타 · 보관 색인)인가, 곳 열쇠 → 이름, idleMs = 받는 곳 마지막 활동부터 지난 시간(모르면 null — 0.1.31 H2) */
+export type SendFacts = { isEnded: boolean; isArchived: boolean; titleOf: (key: string) => string; idleMs?: number | null }
+
+/** 쉰 시간 글(0.1.31 H2 — 「N분 쉼」, 두 시간부터는 시간 · 이틀부터는 일) */
+export function idleText(ms: number): string {
+  const min = Math.floor(ms / 60_000)
+  if (min < 120) return L(`${min}분`, `${min} min`)
+  const hours = Math.floor(min / 60)
+  if (hours < 48) return L(`${hours}시간`, `${hours} h`)
+  return L(`${Math.floor(hours / 24)}일`, `${Math.floor(hours / 24)} days`)
+}
+
+// R1 끝난 · 보관된 세션 → H2 오래 쉰 세션(이 차례 한 번 — 같은 보내기를 다시 하면 통과) → R2 이 차례 세 번째 다른 곳 → 그 밖은 셈에 넣고 통과.
+// 막으면 그 곳을 「물은 곳」(asked)에 적는다. 까닭 꼬리는 사람 차례면 묻기, 아니면 진행판(H2 는 「한 번 더」)
 export function judgeSend(t: RulesTurn, place: SendPlace, f: SendFacts): { next: RulesTurn; deny: string | null } {
+  if (place.dups) {
+    const ids = place.dups.ids.map(id => `\`${id}\``).join(' · ')
+    return {
+      next: t,
+      deny: `${RULE_HEAD}${L(
+        `제목이 같은 세션 ${place.dups.n}개 「${place.title}」 — local_ id 로 보내 주세요(후보 최근 순: ${ids})`,
+        `${place.dups.n} sessions share the title 「${place.title}」 — send with a local_ id (candidates, most recent first: ${ids})`,
+      )}`,
+    }
+  }
   // 0.1.28 ⑦: 같은 곳의 다른 주소(등록부 — uds: 통로 · 엔진 세션 번호 · 이름)로 시킨 · 물은 곳도 같은 곳
   const keys = [place.key, ...(place.alt ?? [])]
   if (keys.some(k => t.allow.includes(k) || t.ok.includes(k))) return { next: t, deny: null }
   const name = `「${place.title}」`
+  const cold = t.cold ?? []
   let what: string | null = null
   if (place.id !== null && f.isEnded) what = L(`끝난 세션 ${name}에 보내려 합니다(끝남 기록 — 끝난 세션엔 새 일을 보내지 않습니다)`, `About to send to the ended session ${name} (it is marked ended — don't send new work to an ended session)`)
   else if (place.id !== null && f.isArchived) what = L(`보관된 세션 ${name}에 보내려 합니다`, `About to send to the archived session ${name}`)
-  else if (!t.places.includes(place.key) && t.places.length >= SEND_PLACE_MAX) {
+  else if (place.id !== null && typeof f.idleMs === 'number' && f.idleMs > COLD_SEND_MS && !cold.includes(place.key)) {
+    const idle = idleText(f.idleMs)
+    return {
+      next: { ...t, cold: [...cold, place.key], asked: t.asked.includes(place.key) ? t.asked : [...t.asked, place.key] },
+      deny: `${RULE_HEAD}${L(
+        `받는 세션 ${name} ${idle} 쉼 — 깨우면 처음부터 다시 읽습니다. 그래도 보내려면 같은 보내기를 한 번 더`,
+        `The receiving session ${name} has been idle ${idle} — waking it re-reads everything from the start. To send anyway, make the same send once more`,
+      )}`,
+    }
+  } else if (!t.places.includes(place.key) && t.places.length >= SEND_PLACE_MAX) {
     what = L(
       `이 차례에 세 번째 다른 세션 ${name}에 보내려 합니다(앞서 보낸 곳: ${t.places.map(k => `「${f.titleOf(k)}」`).join(' · ')})`,
       `About to send to ${name}, a third different session in this turn (sent before: ${t.places.map(k => `「${f.titleOf(k)}」`).join(' · ')})`,
@@ -1377,7 +1608,7 @@ export function judgeSend(t: RulesTurn, place: SendPlace, f: SendFacts): { next:
 }
 
 /** 빈 차례 기록 */
-export const RULES_EMPTY: RulesTurn = { isHuman: false, places: [], asked: [], ok: [], allow: [] }
+export const RULES_EMPTY: RulesTurn = { isHuman: false, places: [], asked: [], ok: [], allow: [], cold: [] }
 
 export function filledSendTargets(text: string): string[] {
   const ko = [...text.matchAll(/「[^」\n]*」\(`(local_[\w-]+|uds:[^`\n]+)`\)(?:에|의 보관을 풀고) SendMessage 로 보내 주세요/g)]
@@ -1461,6 +1692,11 @@ export const HINT_OPEN = (): string =>
     '[easy-session] If "open it" could mean opening a new session or opening a file or window, ask once. For a new session, this session opens it with start_session.',
   )
 export const hintUp = (title: string, id: string): string => L(`[easy-session] 위 세션 「${title}」에 SendMessage(to = ${id})로 보내세요.`, `[easy-session] Send it to the session above, 「${title}」, with SendMessage(to = ${id}).`)
+export const hintUpHeld = (title: string, mode: string): string =>
+  L(
+    `[easy-session] 위 세션 「${title}」${topicMark(title)} ${withIra(modeName(mode) ?? mode)} 이 세션의 SendMessage 는 앱이 붙잡아 버립니다 — 보낼 글은 이 차례 끝 답에 적으세요(그 세션이 이 세션을 연 세션이면 차례 끝 보고로 갑니다). 아니면 사용자에게 입력창 끝에 >>위 를 붙여 보내면 그 세션 패널에 카드로 남는다고 알리세요.`,
+    `[easy-session] The session above, 「${title}」, is in ${modeName(mode) ?? mode}, so the app holds this session's SendMessage and drops it — write what to send in this turn's last answer (if that session opened this one, it goes up as the turn-end report). Otherwise tell the user that ending a message with >>up leaves it as a card in that session's panel.`,
+  )
 
 export function roleRuleLine(o: { isLead: boolean; hasGrand: boolean }): string | null {
   const body = [o.isLead ? LINE_LEAD() : null, o.hasGrand ? LINE_DELEGATE() : null].filter((x): x is string => x !== null)
@@ -1485,12 +1721,12 @@ const HANDOFF_WORDS = /인계\s?해|인계하자|다음\s?차수로/
 const OPEN_WORDS = /열어\s?줘|띄워\s?줘/
 // `>>위` 는 0.1.29 ③ F9 부터 보내기 신호라 뺌(같은 차례에 「SendMessage 는 부르지 마세요」 · 「SendMessage 로 보내세요」가 같이 붙지 않게)
 const UP_WORDS = /위로 보내|위 세션에 보내|주인한테 보내|주인에게 보내/
-export function voiceHints(text: string, up: { id: string; title: string } | null): string[] {
+export function voiceHints(text: string, up: { id: string; title: string; heldMode?: string } | null): string[] {
   const own = ownWords(text)
   const out: string[] = []
   if (HANDOFF_WORDS.test(own)) out.push(HINT_HANDOFF())
   if (OPEN_WORDS.test(own)) out.push(HINT_OPEN())
-  if (up && UP_WORDS.test(own)) out.push(hintUp(up.title, up.id))
+  if (up && UP_WORDS.test(own)) out.push(up.heldMode ? hintUpHeld(up.title, up.heldMode) : hintUp(up.title, up.id))
   return out
 }
 
@@ -1723,4 +1959,3 @@ export function leftText(ms: number): string {
   const h = Math.floor(min / 60)
   return h === 0 ? L(`${min}분`, `${min} min`) : L(`${h}시간${min % 60 === 0 ? '' : ` ${min % 60}분`}`, `${h} h${min % 60 === 0 ? '' : ` ${min % 60} min`}`)
 }
-

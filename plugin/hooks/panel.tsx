@@ -4,10 +4,10 @@
  */
 import type { EngineInterface } from 'claude-code'
 
-import type { AdvisorCall, ChangeGroup, CleanScan, EndedKid, Family, FamilyRow, HeldReport, OpenRow, PanelUi, PlanKind, SentRow, SentState, SessionMeta, UpdateState } from '../types'
+import type { AdvisorCall, ChangeGroup, CleanScan, EndedKid, Family, FamilyRow, HeldReport, MatchAsk, OpenRow, PanelUi, PlanKind, PreAsk, SentRow, SentState, SessionMeta, UpdateState } from '../types'
 import { advisorCharSvg, advisorCharWidth } from './advisor-char'
 import type { AdvisorPose } from './advisor-char'
-import { agoText, heldKey, stampText, statusText, whenText } from './meta'
+import { agoText, heldKey, modeName, stampText, statusText, topicMark, whenText, withIra } from './meta'
 import type { SessionRole } from './meta'
 import { L, lang, plural } from './i18n'
 import { fitCells, textCh } from './tree'
@@ -146,6 +146,8 @@ export type PanelView = {
   mainRow: SendRow | null
   /** 이 세션이 앱에서 연 세션(앱 부모 = 이 세션) — 하위 줄 「붙임」 가름(그 밖 하위는 이지세션 기록으로 붙인 세션) */
   opened: ReadonlySet<string>
+  /** 끝난 듯(0.1.31 ②) — 그 세션 마지막 답 끝 두 줄이 모두 「없음」(끝남 기록은 아님 — 사람이 [끝내기]로 확정). 노트 register.md#ending */
+  ending?: ReadonlySet<string>
   /** 이 세션이 보낸 글 최근 것(앱 도착 기록) — 칸마다 받는 세션으로 가른다 */
   sent: readonly SentRow[]
   /**
@@ -173,7 +175,7 @@ export type PanelView = {
   /** 들이기 후보(오케만) — 이 묶음 밖의 살아 있는 세션 */
   adopt: readonly FamilyRow[]
   /** [설정] 쪽 — 입력창 위 줄에 둘 것 · 화면 · advisor · 새 자식 세션 저절로 고정 · 저절로 떼어 내기 · 자식 보고. isWorking 이면 advisor 고르기를 막는다 */
-  settings: { quick: ReadonlySet<QuickItem>; display: Choice; advisor: Choice; isWorking: boolean; autoPin: boolean; autoDetach: boolean; autoUnpin: boolean; autoGroup: boolean; firstUltra: boolean; reports: Choice; peerRel: boolean; sessionRules: boolean; mdLock?: MdLockView; lang?: LangView }
+  settings: { quick: ReadonlySet<QuickItem>; display: Choice; advisor: Choice; isWorking: boolean; autoPin: boolean; autoDetach: boolean; autoUnpin: boolean; autoGroup: boolean; firstUltra: boolean; reports: Choice; peerRel: boolean; sessionRules: boolean; mentionInfo?: boolean; mdLock?: MdLockView; lang?: LangView }
   /** 「이 세션」 쪽 — 이 세션 줄(상태 · 끝남), 형제 세션, 자식 */
   selfRow: FamilyRow | null
   siblings: readonly FamilyRow[]
@@ -266,6 +268,8 @@ export type PanelActs = {
   pickFirstUltra: (on: boolean) => void
   /** 보낸 세션 관계 알리기(0.1.20) — 노트 panel.md#peerRelSet */
   pickPeerRel: (on: boolean) => void
+  /** 글에 나온 세션 정보 붙이기(0.1.31 ①) — 노트 register.md#mention */
+  pickMentionInfo?: (on: boolean) => void
   /** md 잠금(0.1.29 ④ F2): 스위치 · 잠금 폴더 자리 · [풀기](파일 이름) */
   pickMdLock?: (on: boolean) => void
   mdLockDir?: (path: string) => void
@@ -276,6 +280,20 @@ export type PanelActs = {
   clean: (id: string) => Promise<void>
   /** 끝난 하위 모두 보관 — bypass 만 한 번에(화면에 열린 세션 건너뜀 · 고정 풀고 보관 · 알림 한 줄), auto 면 줄마다(0.1.26 — register.md#archiveAll) */
   archiveAll: (ids: readonly string[]) => Promise<void>
+  /** 보관 · 끝내기 전 남은 메시지 카드(0.1.31 ⑧) — take 받고 · drop 지우고 · keep 남기고(붙은 세션만이면 같이 보관) · null 닫기. 노트 register.md#leftover */
+  pre?: (choice: 'take' | 'drop' | 'keep' | null) => Promise<void>
+  /** 「끝난 하위 정리」 [이 세션을 권한 무시로](0.1.31 ⑦ · 8b) — 바로 부르기 → 안 되면 입력칸 지시 글. 노트 register.md#selfBypass */
+  selfBypass?: () => Promise<unknown>
+  /** 0.1.31 8b ⓐ 보낼 칸 자리 고르기(받는 쪽 권한 무시 · plan — panel.md#matchCard): 받는 세션을 자동으로 내리고 보내기(남의 세션이면 한 번 더 묻기 · 일하는 중이면 차례 끝 뒤) · 이 세션을 권한 무시로 올리고 보내기 · 카드로 보내기 · 묻기에서 뒤로 · 닫기. 노트 register.md#modeMatch */
+  matchLower?: () => void
+  matchUp?: () => void
+  matchCard?: () => void
+  matchBack?: () => void
+  matchCancel?: () => void
+  /** 0.1.31 8b ⓑ [하위 모두 자동으로](메인 · 오케 — 권한 모드 줄 오른쪽) · 트리로만 묶인 하위 묻기 카드 [내리기] · [그대로 두기]. 노트 register.md#kidsAuto */
+  kidsAuto?: () => void
+  kidsAutoOk?: () => void
+  kidsAutoNo?: () => void
   /** 일 합치기(0.1.26) — 그 하위의 보낼 칸을 합치기 글로 채워 연다(정리 부탁과 같은 길) */
   merge: (id: string) => Promise<void>
   /** 보고 꼴로(0.1.26) — 입력칸에 보고 꼴 글(위가 있으면 끝에 전달 신호, 없으면 채팅에) · 다시 누르면 뺀다 */
@@ -640,7 +658,18 @@ const MD_LOCK_HELP: Help = {
   },
 }
 
-const SET_HELP: Record<'display' | 'advisor' | 'autoPin' | 'autoUnpin' | 'autoGroup' | 'autoDetach' | 'firstUltra' | 'reports' | 'peerRel' | 'sessionRules', Help> = {
+const SET_HELP: Record<'display' | 'advisor' | 'autoPin' | 'autoUnpin' | 'autoGroup' | 'autoDetach' | 'firstUltra' | 'reports' | 'peerRel' | 'sessionRules' | 'mentionInfo', Help> = {
+  get mentionInfo() {
+    return {
+      tip: L('내 글에 다른 세션 제목이 나오면 그 세션 정보를 Claude 에게만 한 줄 붙입니다', 'When your message names another session, gives Claude alone one line about that session'),
+      lines: [
+        L(
+          '보낸 글에 다른 세션의 제목 · [범위]를 뗀 제목 · 짧은 이름이 들어 있으면 그 세션의 id · 권한 모드 · 도는 중인지 · 위 · 아래 · 상태 · 끝남을 한 줄로 붙입니다(최근 셋까지). 세션을 찾는 도구 호출이 없어집니다.',
+          "When your message has another session's title, its title without the [scope] or its short name, gives Claude one line with that session's id, permission mode, whether it is running, the sessions above and below, its status and whether it ended (up to three, most recent first). Claude no longer needs a tool call to find it.",
+        ),
+      ],
+    }
+  },
   get display() {
     return {
       tip: L('모든 세션의 Claude 답을 고른 기기에 맞춥니다', "Fits Claude's answers in every session to the device you pick"),
@@ -736,6 +765,8 @@ export const AUTO_SWITCH = { pin: `${QUICK_SWITCH}auto-pin`, detach: `${QUICK_SW
 export const MGR_SWITCH = { pin: `${QUICK_SWITCH}mgr-pin`, remote: `${QUICK_SWITCH}mgr-remote`, end: `${QUICK_SWITCH}mgr-end` } as const
 /** [설정] 「보낸 세션 관계 알리기」 스위치 key(0.1.20) — 누름은 register.tsx ui.message 로 온다 */
 export const PEER_SWITCH = `${QUICK_SWITCH}peer-rel`
+/** [설정] 「글에 나온 세션 정보 붙이기」 스위치 key(0.1.31 ①) — 누름은 register.tsx ui.message 로 온다 */
+export const MENTION_SWITCH = `${QUICK_SWITCH}mention-info`
 /** [설정] 「md 잠금 보기 · 풀기」 스위치(0.1.29 ④ F2) */
 export const MD_LOCK_SWITCH = `${QUICK_SWITCH}md-lock`
 /** [설정] 「세션 규칙(보내기 확인 · 차례 줄)」 스위치 key(0.1.27) — 누름은 register.tsx ui.message 로 온다. 노트 register.md#sendRules */
@@ -907,6 +938,8 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
               </Text>
             </Box>
             <Box key={`${key}-s${i}`} columnGap={1} flexShrink={0}>
+              {/* 노트: panel.md#preCard — 받는 곳이 보관됐으면 「받는 곳 보관됨」(0.1.31 ⑧) */}
+              {v.metas.get(s.to)?.isArchived ? tagBox(`${key}-a${i}`, L('받는 곳 보관됨', 'Receiver archived'), 'warn') : null}
               <Text color={s.state === 'replied' ? 'success' : s.state === 'undelivered' ? 'error' : 'inactive'}>{SENT_TEXT[s.state]}</Text>
               <Text color="subtle">{agoText(s.sentAt, v.now)}</Text>
             </Box>
@@ -980,9 +1013,46 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
     )
   }
 
+  // 내리기는 받는 쪽이 권한 무시일 때만(plan 을 자동으로 바꾸면 올리기 — 승인 카드) · 일하는 중이면 [끝나면 내리고 보내기] · 남의 세션은 한 번 더 묻는 줄
+  const matchCard = (el: string, m: MatchAsk, title: string) => {
+    const name = bareTitle(title)
+    const to = modeName(m.toMode) ?? m.toMode
+    const from = modeName(m.fromMode) ?? m.fromMode
+    const canLower = m.toMode === 'bypassPermissions'
+    const lowerFirst = canLower && m.isOwnKid
+    const later = L('끝나면 내리고 보내기', 'Lower when done, then send')
+    const lower = <Button key={`es-match-lower-${el}`} variant={lowerFirst ? 'primary' : undefined} label={m.busy ? later : L('받는 세션을 자동으로 내리고 보내기', 'Lower it to Auto, then send')} onPress={() => acts.matchLower?.()} />
+    const card = <Button key={`es-match-card-${el}`} variant={lowerFirst ? undefined : 'primary'} label={L('카드로 보내기', 'Send as a card')} onPress={() => acts.matchCard?.()} />
+    const up = <Button key={`es-match-up-${el}`} label={L('이 세션을 권한 무시로 올리기', 'Raise this session to Bypass')} onPress={() => acts.matchUp?.()} />
+    return (
+      <Box key={`es-match-${el}`} flexDirection="column" borderStyle="round" borderColor="promptBorder" paddingX={1} marginTop={0.5}>
+        <Box key={`es-match-head-${el}`} columnGap={1} alignItems="flex-start">
+          <Box key={`es-match-title-${el}`} flexGrow={1} flexShrink={1} minWidth={0}>
+            <Text wrap="wrap">{L(`「${name}」${topicMark(name)} ${to}이고 이 세션은 ${withIra(from)} Claude 가 보내면 앱이 붙잡아 몇 분 뒤 버립니다`, `“${name}” is in ${to} and this session is in ${from}, so a send from Claude would be held and dropped after a few minutes`)}</Text>
+          </Box>
+          <Button key={`es-match-x-${el}`} variant="secondary" dimColor label="✕" onPress={() => acts.matchCancel?.()} />
+        </Box>
+        {m.confirm ? (
+          <Box key={`es-match-ask-${el}`} flexDirection="column" marginTop={0.5}>
+            <Text wrap="wrap">{L(`「${name}」${topicMark(name)} 이 세션이 연 하위가 아니라 내리기 전에 앱이 한 번 더 물을 수 있습니다. 자동으로 내릴까요?`, `“${name}” isn't a session this one opened, so the app may ask again before lowering it. Lower it to Auto?`)}</Text>
+            <Box key={`es-match-ask-btns-${el}`} columnGap={1} rowGap={0.5} flexWrap="wrap" justifyContent="flex-end" marginTop={0.5}>
+              <Button key={`es-match-ok-${el}`} variant="primary" label={m.busy ? later : L('내리고 보내기', 'Lower and send')} onPress={() => acts.matchLower?.()} />
+              <Button key={`es-match-back-${el}`} label={L('뒤로', 'Back')} onPress={() => acts.matchBack?.()} />
+            </Box>
+          </Box>
+        ) : (
+          <Box key={`es-match-btns-${el}`} columnGap={1} rowGap={0.5} flexWrap="wrap" justifyContent="flex-end" marginTop={0.5}>
+            {lowerFirst ? [lower, card, up] : canLower ? [card, lower, up] : [card, up]}
+          </Box>
+        )}
+      </Box>
+    )
+  }
+
   /** 보낼 글 칸 또는 깨우는 값 카드(식은 세션에 보내려 할 때 — register 의 sendGo 가 card 를 세운다) */
   const sending = (el: string, id: string, title: string, isBare = false) => {
     const k1 = v.ctxK.get(id)
+    if (pu.match?.id === id) return matchCard(el, pu.match, title)
     return pu.card === id && k1 !== undefined ? wakeCard(el, id, k1) : sendBox(el, id, title, isBare)
   }
 
@@ -1070,13 +1140,16 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
     // ⋯ 는 손질(메인 · 오케) 또는 그 세션 모인 보고 · 보낸 글이 있을 때 — 서브도 보고를 낱개로 읽고 거절한다(설치판 할 일 카드 몫)
     const hasMore = canFix || mine.length > 0 || sentTo.length > 0
     const endAt = endedAt.get(r.id)
+    const isEnding = !r.isEnded && !r.isArchived && v.ending?.has(r.id) === true
     const state = r.isEnded
       ? tagBox(`es-kt-${el}`, endAt === undefined ? L('끝남', 'Ended') : L(`끝남 ${clockText(endAt, v.now)}`, `Ended ${clockText(endAt, v.now)}`), 'ok')
-      : isWaiting(r)
-        ? tagBox(`es-kt-${el}`, L('입력 필요', 'Needs input'), 'warn')
-        : r.status
-          ? tagBox(`es-kt-${el}`, statusText(r.status))
-          : null
+      : isEnding
+        ? withTip(ui, `es-kend-tip-${el}`, tagBox(`es-kt-${el}`, L('끝난 듯', 'Looks done')), L('마지막 답 끝 두 줄이 모두 없음', 'The last answer ended with nothing remaining and nothing to decide'))
+        : isWaiting(r)
+          ? tagBox(`es-kt-${el}`, L('입력 필요', 'Needs input'), 'warn')
+          : r.status
+            ? tagBox(`es-kt-${el}`, statusText(r.status))
+            : null
     // 「N일 쉼」(0.1.26 — 시안 5.1 정할 것 3): 마지막 활동 뒤 쉰 날이 문턱(IDLE_DAYS) 이상 — 끝난 · 입력 필요 세션은 뺌(그 표지가 따로 있다).
     // 앱 메타엔 도는 중 값이 없어 끝남만 빼고 센다(문턱만큼 쉰 세션은 도는 중일 수 없다고 봄)
     const idleDays = r.lastAt === null ? 0 : Math.floor((v.now - r.lastAt) / DAY_MS)
@@ -1107,11 +1180,20 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
             {v.heir === r.id ? tagBox(`es-kheir-${el}`, L('다음 차수', 'Next round')) : null}
             {notOpened ? tagBox(`es-kat-${el}`, how) : null}
             {mine.length > 0 ? <Button key={`es-take-${el}`} variant="secondary" label={L(`수락 ${mine.length}`, `Take ${mine.length}`)} onPress={() => acts.accept(mine.map(heldKey))} /> : null}
+            {isEnding ? <Button key={`es-kend-${el}`} variant="secondary" label={L('끝내기', 'End')} onPress={() => acts.finish(r.id, true)} /> : null}
             {r.isEnded && canFix ? <Button key={`es-end-arch-${el}`} variant="secondary" label={L('보관', 'Archive')} onPress={() => void acts.archive(r.id, true)} /> : null}
             <Button key={`es-m-go-${el}`} variant="secondary" label={L('가기', 'Go')} onPress={() => acts.go(r.id)} />
             {hasMore ? more : null}
           </Box>
         </Box>
+        {/* 노트: panel.md#kidRow — 0.1.31 ⑦ 아랫줄 맨 앞 권한 모드 낱말(앱 메뉴 이름) · 마지막 활동 */}
+        {r.mode ? (
+          <Box key={`es-kmode-${el}`} marginLeft={2.5} minWidth={0}>
+            <Text color="subtle" size="footnote" wrap="truncate-end">
+              {`${modeName(r.mode)}${r.lastAt !== null ? ` · ${clockText(r.lastAt, v.now)}` : ''}`}
+            </Text>
+          </Box>
+        ) : null}
         {needsLine(r)}
         {r.kids > 0 ? underLine(r, el) : null}
         {r.kids > 0 && folds.has(`${UNDER_FOLD}${r.id}`) ? underList(r, el) : null}
@@ -1308,14 +1390,13 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
               {bareTitle(v.metas.get(from)?.title ?? shown[0]?.title ?? from)}
             </Text>
           </Box>
+          {/* 노트: panel.md#preCard — 보낸 세션이 보관됐으면 머리에 「보관됨」(0.1.31 ⑧ — [남기고 보관]한 글) */}
+          {v.metas.get(from)?.isArchived ? tagBox(`es-mc-arch-${el}`, L('보관됨', 'Archived')) : null}
           <Text color="subtle">{L(`받은 글 ${all.length}`, `${all.length} received`)}</Text>
           <Box flexGrow={1} />
-          {all.length > 1 ? (
-            <Box columnGap={0.5} alignItems="center" flexShrink={0}>
-              <Button key={`es-acc-all-${el}`} variant="secondary" label={L('전체 수락', 'Accept all')} onPress={() => acts.accept(keys)} />
-              <Button key={`es-rej-all-${el}`} variant="secondary" label={L('전체 삭제', 'Delete all')} onPress={() => acts.reject(keys)} />
-            </Box>
-          ) : null}
+          {/* 단추 둘은 머리 줄의 직접 자식(감싼 상자 없이 — 같은 간격 · 정렬, 빈 칸 상자가 오른쪽으로 민다). 0.1.31 8c 맨 위 줄 몫을 0.1.3 최악 경우 그리기 한도 안에서 마련 */}
+          {all.length > 1 ? <Button key={`es-acc-all-${el}`} variant="secondary" label={L('전체 수락', 'Accept all')} onPress={() => acts.accept(keys)} /> : null}
+          {all.length > 1 ? <Button key={`es-rej-all-${el}`} variant="secondary" label={L('전체 거절', 'Reject all')} onPress={() => acts.reject(keys)} /> : null}
         </Box>
         {shown.map(heldItem)}
         {isLast && cost ? (
@@ -1388,11 +1469,48 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
 
   // (50개를 다 펴면 10만 자를 넘어 패널이 통째로 안 그려진다 — 0.1.3 시험에서 잼). 수락 어림은 마지막 카드 아래 한 번
   // 0.1.27: 칸 카드 안 덩이 목록(보낸 세션마다 한 덩이 — 덩이 사이는 칸 카드의 가는 선). 「그 밖 N개」는 마지막 덩이 아래
+  // 보낸 세션이 둘 이상일 때만(하나면 덩이 머리 [전체 수락] · [전체 거절]과 같아서). 묻는 상태는 PanelUi.ask 'rejectAll'(칸은 한 번에 하나만 펴짐)
+  const heldAll = (key: string, list: readonly HeldReport[]): unknown[][] => {
+    const n = new Set(list.map(r => r.from)).size
+    if (n < 2) return []
+    const keys = list.map(heldKey)
+    const isAsking = pu.ask === 'rejectAll'
+    // 가벼운 한 줄(칸 줄 틀 없이) — 0.1.3 최악 경우(모아 둔 메시지 50 · 본문 펼침)가 그리기 한도 8만 바로 아래라 줄 하나도 무겁다(시험으로 잼)
+    const rows: unknown[][] = [
+      [
+        <Box key={`${key}-all`} columnGap={1} rowGap={0.4} alignItems="center" justifyContent="flex-end" flexWrap="wrap">
+          <Text bold>{L(`보낸 세션 ${n} · 글 ${list.length}`, `${plural(n, 'sender')} · ${plural(list.length, 'message')}`)}</Text>
+          <Button key={`${key}-acc-every`} variant="secondary" label={L('모두 수락', 'Accept everything')} onPress={() => acts.accept(keys)} />
+          <Button key={`${key}-rej-every`} variant="secondary" label={L('모두 거절', 'Reject everything')} onPress={() => acts.ask(isAsking ? null : 'rejectAll')} />
+        </Box>,
+      ],
+    ]
+    if (isAsking)
+      rows.push([
+        <Box key={`${key}-rej-ask`} flexDirection="column" borderStyle="round" borderColor="promptBorder" paddingX={1} marginTop={0.3}>
+          <Text wrap="wrap">{L(`글 ${list.length}개를 지웁니다 — 되돌릴 수 없음`, `Deletes ${plural(list.length, 'message')} — can't be undone`)}</Text>
+          <Box key={`${key}-rej-ask-btns`} columnGap={1} rowGap={0.5} flexWrap="wrap" justifyContent="flex-end" marginTop={0.4}>
+            <Button
+              key={`${key}-rej-ok`}
+              variant="primary"
+              label={L('지우기', 'Delete')}
+              onPress={() => {
+                acts.ask(null)
+                return acts.reject(keys)
+              }}
+            />
+            <Button key={`${key}-rej-no`} label={L('취소', 'Cancel')} onPress={() => acts.ask(null)} />
+          </Box>
+        </Box>,
+      ])
+    return rows
+  }
+
   const heldCards = (key: string, list: readonly HeldReport[]): unknown[][] => {
     if (list.length === 0) return []
     const shown = list.slice(0, MSG_LIMIT)
     const senders = [...new Set(shown.map(r => r.from))]
-    return senders.map((from, i) => [
+    return [...heldAll(key, list), ...senders.map((from, i) => [
       msgCard(
         from,
         shown.filter(r => r.from === from),
@@ -1401,10 +1519,10 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
       ),
       i === senders.length - 1 && list.length > MSG_LIMIT ? (
         <Box key={`${key}-rest`} marginTop={0.4} paddingBottom={0.2}>
-          <Text color="subtle" size="footnote">{L(`그 밖 ${list.length - MSG_LIMIT}개(오래된 것) — 위를 처리하면 이어서 보입니다. 전체 수락 · 전체 삭제는 그 세션 것 모두에 걸립니다`, `${list.length - MSG_LIMIT} more (older) show next · Accept all · Delete all include them`)}</Text>
+          <Text color="subtle" size="footnote">{L(`그 밖 ${list.length - MSG_LIMIT}개(오래된 것) — 위를 처리하면 이어서 보입니다. 전체 수락 · 전체 거절은 그 세션 것 모두에 걸립니다`, `${list.length - MSG_LIMIT} more (older) show next · Accept all · Reject all include them`)}</Text>
         </Box>
       ) : null,
-    ])
+    ])]
   }
 
   const heldList = (el: string, list: readonly HeldReport[]) => {
@@ -1420,7 +1538,8 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
               {cost ? L(`수락하면 ${cost}`, `Accept: ${cost}`) : ''}
             </Text>
           </Box>
-          {list.length > 1 ? <Button key={`es-rej-all-${el}`} plain dimColor label={L('전체 삭제', 'Delete all')} onPress={() => acts.reject(list.map(heldKey))} /> : null}
+          {list.length > 1 ? <Button key={`es-kacc-all-${el}`} variant="secondary" label={L('전체 수락', 'Accept all')} onPress={() => acts.accept(list.map(heldKey))} /> : null}
+          {list.length > 1 ? <Button key={`es-rej-all-${el}`} plain dimColor label={L('전체 거절', 'Reject all')} onPress={() => acts.reject(list.map(heldKey))} /> : null}
         </Box>
         {list.length > MSG_LIMIT ? (
           <Text key={`es-mc-rest-${el}`} color="subtle" size="footnote">{L(`그 밖 ${list.length - MSG_LIMIT}개(오래된 것) — 위를 처리하면 이어서 보입니다`, `${list.length - MSG_LIMIT} more (older) — they show once you handle the ones above`)}</Text>
@@ -1463,13 +1582,16 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
     }
     const kidFrom = new Set(heldKid.map(r => r.from)).size
     const b = v.board
+    // 0.1.31 H1: 맨 위 단독(solo — 세션 트리 위가 없음)이 자식을 열어도 묻는다 — 오케로 바꾸면 맨 위라 메인이 된다(roleOf 는 그대로 — 사용자 11-19)
     const openedNow = kids.filter(r => v.opened.has(r.id) && !r.isEnded && r.id !== v.heir).length
     const askOrche =
-      v.role === 'sub' && openedNow > 0 && !folds.has(NOW_ORCHE_NO)
+      (v.role === 'sub' || v.role === 'solo') && openedNow > 0 && !folds.has(NOW_ORCHE_NO)
         ? line(
             'es-now-orche',
             'branch',
-            L(`하위 세션 ${openedNow}개가 생김 — 오케로 바꿀까요?`, `${plural(openedNow, 'session')} opened below — make this an orchestrator?`),
+            v.role === 'solo'
+              ? L(`하위 세션 ${openedNow}개가 생김 — 오케로 바꿀까요? 맨 위라 메인이 됩니다`, `${plural(openedNow, 'session')} opened below — make this an orchestrator? At the top, it becomes the main`)
+              : L(`하위 세션 ${openedNow}개가 생김 — 오케로 바꿀까요?`, `${plural(openedNow, 'session')} opened below — make this an orchestrator?`),
             <Button key="es-now-orche-b" variant="secondary" label={L('오케로', 'Make orchestrator')} onPress={() => acts.orche(v.selfId, true)} />,
             <Button key="es-now-orche-no" plain dimColor label={L('그대로', 'Keep')} onPress={() => acts.fold(NOW_ORCHE_NO, true)} />,
             true,
@@ -1709,6 +1831,135 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
     )
   }
 
+  // 안 받은 글이 있으면 [받고 · 지우고 · 남기고 <동작>], 없으면 단추 하나(붙은 세션만이면 [같이 보관]). 센 값은 누를 때 register 가 담은 것(그릴 때 파일을 안 읽음)
+  const preCard = (pre: PreAsk) => {
+    const isTidy = pre.act === 'tidy'
+    const act = pre.act === 'finish' ? L('끝내기', 'end') : L('보관', 'archive')
+    const one = pre.rows[0]
+    const head = isTidy ? L(`끝난 하위 ${pre.ids.length} 보관 전에`, `Before archiving ${plural(pre.ids.length, 'ended session')} below`) : L(`${bareTitle(one?.title ?? '')} ${pre.act === 'finish' ? '끝내기' : '보관'} 전에`, `Before you ${act} ${bareTitle(one?.title ?? '')}`)
+    const hasIn = pre.rows.some(r => r.inN > 0)
+    const msgRows = pre.rows.filter(r => r.inN > 0 || r.outN > 0)
+    const line = (key: string, text: string, tone?: 'warning') => (
+      <Box key={key} minWidth={0}>
+        <Text color={tone ?? 'subtle'} size="footnote">
+          {`· ${text}`}
+        </Text>
+      </Box>
+    )
+    const lines = isTidy
+      ? [
+          ...(msgRows.length > 0 ? [line('es-pre-sum', L(`${pre.ids.length} 중 ${msgRows.length} 세션에 남은 메시지가 있습니다`, `${msgRows.length} of ${pre.ids.length} have messages left`))] : []),
+          ...pre.rows.flatMap(r => [
+            ...(r.inN > 0 ? [line(`es-pre-in-${k(r.id)}`, L(`${bareTitle(r.title)} 안 받은 글 ${r.inN}`, `${bareTitle(r.title)}: ${r.inN} not taken`))] : []),
+            ...(r.outN > 0 ? [line(`es-pre-out-${k(r.id)}`, L(`${bareTitle(r.title)} 안 읽힌 보낸 글 ${r.outN}`, `${bareTitle(r.title)}: ${r.outN} sent unread`))] : []),
+            ...(r.attached > 0 ? [line(`es-pre-att-${k(r.id)}`, L(`${bareTitle(r.title)} 붙은 세션 ${r.attached}개 — 먼저 떼거나 같이 보관할지 정해 주세요`, `${bareTitle(r.title)}: ${plural(r.attached, 'attached session')} — detach first, or archive together`), 'warning')] : []),
+          ]),
+        ]
+      : [
+          ...(one && one.inN > 0 ? [line('es-pre-in', L(`그 세션이 보낸 글 ${one.inN}개를 아직 안 받았습니다`, `${plural(one.inN, 'message')} from it not taken yet`))] : []),
+          ...(one && one.outN > 0 ? [line('es-pre-out', L(`그 세션에 보낸 글 ${one.outN}개가 아직 안 읽혔습니다`, `${plural(one.outN, 'message')} you sent it not read yet`))] : []),
+        ]
+    const plainLabel = isTidy ? (pre.rows.some(r => r.attached > 0) ? L('같이 보관', 'Archive together') : L('모두 보관', 'Archive all')) : pre.act === 'finish' ? L('끝내기', 'End') : L('보관', 'Archive')
+    const label =(verb: string, en: string) => (isTidy ? L(`${verb} 모두 ${act}`, `${en} and ${act} all`) : L(`${verb} ${act}`, `${en} and ${act}`))
+    const go = (choice: 'take' | 'drop' | 'keep') => () => void acts.pre?.(choice)
+    const buttons = hasIn
+      ? [
+          <Button key="es-pre-take" variant="secondary" label={label('받고', 'Take')} onPress={go('take')} />,
+          <Button key="es-pre-drop" variant="secondary" label={label('지우고', 'Delete')} onPress={go('drop')} />,
+          <Button key="es-pre-keep" variant="secondary" label={label('남기고', 'Keep')} onPress={go('keep')} />,
+        ]
+      : [<Button key="es-pre-keep" variant="secondary" label={plainLabel} onPress={go('keep')} />]
+    return (
+      <Box key="es-pre" flexDirection="column" rowGap={0.2} borderStyle="single" borderColor="promptBorder" paddingX={0.6} paddingY={0.3} marginBottom={0.4} minWidth={0}>
+        <Box key="es-pre-h" columnGap={1} alignItems="center" minWidth={0}>
+          <Box flexGrow={1} flexShrink={1} minWidth={0}>
+            <Text bold wrap="truncate-end">
+              {head}
+            </Text>
+          </Box>
+          <Button key="es-pre-x" plain dimColor label="✕" onPress={() => void acts.pre?.(null)} />
+        </Box>
+        {lines}
+        <Box key="es-pre-b" columnGap={1} rowGap={0.4} flexWrap="wrap" alignItems="center" marginTop={0.2} minWidth={0}>
+          {buttons}
+        </Box>
+        {hasIn ? (
+          <Box key="es-pre-note" minWidth={0}>
+            <Text color="subtle" size="footnote">
+              {L('안 받은 글 = 모아 둔 보고 + 카드로 온 글', 'Not taken = held reports + cards left for this session')}
+            </Text>
+          </Box>
+        ) : null}
+      </Box>
+    )
+  }
+
+  const kidModes = (list: readonly FamilyRow[]): string | null => {
+    const order = ['auto', 'bypassPermissions', 'default', 'acceptEdits', 'plan', 'dontAsk']
+    const n = new Map<string, number>()
+    for (const r of list) if (r.mode) n.set(r.mode, (n.get(r.mode) ?? 0) + 1)
+    if (n.size === 0) return null
+    const keys = [...n.keys()].sort((a, b) => (order.indexOf(a) < 0 ? 99 : order.indexOf(a)) - (order.indexOf(b) < 0 ? 99 : order.indexOf(b)))
+    return keys.map(m => `${modeName(m)} ${n.get(m)}`).join(' · ')
+  }
+
+  const kidsAskCard = (ids: readonly string[]) => {
+    const names = ids.slice(0, 3).map(id => `「${bareTitle(v.metas.get(id)?.title ?? id)}」`).join(' · ')
+    const more = ids.length > 3 ? L(` 외 ${ids.length - 3}`, ` and ${ids.length - 3} more`) : ''
+    return (
+      <Box key="es-kids-ask" flexDirection="column" borderStyle="round" borderColor="promptBorder" paddingX={1} marginTop={0.5}>
+        <Text wrap="wrap">{L(`트리로만 묶인 하위 ${ids.length}개(${names}${more})는 이 세션이 연 세션이 아니라 앱이 먼저 물을 수 있습니다. 자동으로 내릴까요?`, `${plural(ids.length, 'session')} below only by tree (${names}${more}) weren't opened by this session, so the app may ask first. Lower them to Auto?`)}</Text>
+        <Box key="es-kids-ask-btns" columnGap={1} rowGap={0.5} flexWrap="wrap" justifyContent="flex-end" marginTop={0.5}>
+          <Button key="es-kids-ask-ok" variant="primary" label={L('내리기', 'Lower')} onPress={() => acts.kidsAutoOk?.()} />
+          <Button key="es-kids-ask-no" label={L('그대로 두기', 'Leave as is')} onPress={() => acts.kidsAutoNo?.()} />
+        </Box>
+      </Box>
+    )
+  }
+
+  // 「이 세션이 바로 합니다 …」 한 줄. 그 밖 모드면 「<모드>이라 바로 못 합니다」 + [이 세션을 권한 무시로] · [Claude 에게 줄마다 맡기기] + 흐린 작은 글 셋
+  const tidyBox = (ended: readonly FamilyRow[]) => {
+    const selfMode = v.metas.get(v.selfId)?.mode ?? null
+    const name = modeName(selfMode) ?? L('이 모드', 'this mode')
+    const small = (key: string, text: string) => (
+      <Box key={key} minWidth={0}>
+        <Text color="subtle" size="footnote">
+          {text}
+        </Text>
+      </Box>
+    )
+    return (
+      <Box key="es-tidy" flexDirection="column" rowGap={0.2} borderStyle="single" borderColor="promptBorder" paddingX={0.6} paddingY={0.3} marginTop={0.3} minWidth={0}>
+        <Box key="es-tidy-h" columnGap={1} alignItems="center" minWidth={0}>
+          <Box flexGrow={1} flexShrink={1} minWidth={0}>
+            <Text bold wrap="truncate-end">
+              {L(`끝난 하위 정리 ${ended.length}`, `Tidy ended ${ended.length}`)}
+            </Text>
+          </Box>
+          {v.isBypass ? <Button key="es-ended-all" variant="secondary" label={L('정리', 'Tidy')} onPress={() => void acts.archiveAll(ended.map(r => r.id))} /> : null}
+        </Box>
+        {v.isBypass ? (
+          small('es-tidy-now', L('이 세션이 바로 합니다 — 고정 풀기 · 보관 · Claude 안 거침(토큰 0)', 'This session does it directly — unpin · archive · no Claude turn (0 tokens)'))
+        ) : (
+          <Box key="es-tidy-ask" flexDirection="column" rowGap={0.2} minWidth={0}>
+            <Box minWidth={0}>
+              <Text color="warning" size="footnote">
+                {L(`${name}${josa(name, '이라', '라')} 바로 못 합니다`, `In ${name} mode it can't do this directly`)}
+              </Text>
+            </Box>
+            <Box key="es-tidy-b" columnGap={1} rowGap={0.4} flexWrap="wrap" alignItems="center" marginTop={0.2} minWidth={0}>
+              <Button key="es-tidy-bypass" variant="secondary" label={L('이 세션을 권한 무시로', 'Switch this session to Bypass')} onPress={() => void acts.selfBypass?.()} />
+              <Button key="es-tidy-claude" variant="secondary" label={L('Claude 에게 줄마다 맡기기', 'Ask Claude row by row')} onPress={() => void acts.archive(ended[0]!.id, true)} />
+            </Box>
+            {small('es-tidy-s1', L('앞 단추는 앱 승인 카드 한 번 · 그 뒤로 이 세션은 검사 없이 실행', "The first shows the app's approval card once · after that this session runs without checks"))}
+            {small('es-tidy-s2', L('줄마다 맡기면 보관 하나에 차례 하나 — 토큰이 듭니다', 'Row by row is one turn per archive — it costs tokens'))}
+            {small('es-tidy-s3', L('붙은 하위가 있으면 같이 보관되지 않게 먼저 묻습니다', 'If one has sessions attached, it asks first so they are not archived along'))}
+          </Box>
+        )}
+      </Box>
+    )
+  }
+
   const adoptList = () => (
     <Box key="es-adopt" flexDirection="column" marginTop={0.4}>
       <Text color="subtle">{L('밑으로 붙일 세션', 'Sessions to put under this one')}</Text>
@@ -1910,6 +2161,15 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
       else buttons.push(<Button key="es-s-orche" variant="secondary" label={L('오케 풀기', 'Step down')} onPress={() => acts.orche(v.selfId, false)} />)
     }
     if (role === 'sub' || role === 'solo') buttons.push(<Button key="es-s-orche" variant="secondary" label={L('오케로', 'Make orchestrator')} onPress={() => acts.orche(v.selfId, true)} />)
+    // 0.1.31 H1: 맨 위 단독이면 [오케로] 옆 흐린 한 줄 — 누르면 곧 메인
+    if (role === 'solo')
+      buttons.push(
+        <Box key="es-r-top-main" flexShrink={1} minWidth={0}>
+          <Text color="subtle" size="footnote">
+            {L('맨 위라 메인이 됩니다', 'At the top, it becomes the main')}
+          </Text>
+        </Box>,
+      )
     if (role === 'sub' && canDetach) {
       buttons.push(withTip(ui, 'es-r-solo-box', <Button key="es-r-solo" variant="secondary" label={L('단독으로 — 떼어 내기', 'Solo — detach')} onPress={() => acts.detach(v.selfId)} />, L('되돌릴 수 없습니다 — 연 세션에 보고가 더는 안 갑니다', "Can't be undone — reports stop going to the session that opened this one")))
     }
@@ -2058,6 +2318,23 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
     const fixLine = canFix ? L('손질은 줄마다 ⋯ 이나 「손질」 줄에서 합니다(오케 세션에서만).', 'Manage with ⋯ on each row or on the Manage row (orchestrator sessions only).') : L('하위 세션 손질은 메인 · 오케만 — 오케로 바꾸면 손질이 생깁니다.', 'Only main and orchestrator sessions manage the sessions below — make this an orchestrator to get those tools.')
     const recvHelp: RowHelp = { id: 'rep:recv', help: { tip: L('받는 법 바꾸기는 [설정] 「자식 보고」', 'Change how reports come in Settings → Child reports'), lines: [L('받는 법 바꾸기는 [설정] 「자식 보고」.', 'Change how reports come in Settings → Child reports.'), fixLine] } }
     const out: unknown[][] = []
+    if (pu.pre) out.push([preCard(pu.pre)])
+    const modeLine = kidModes(kids)
+    const canAuto = canFix && kids.some(r => !r.isEnded && !r.isArchived && r.mode === 'bypassPermissions')
+    if (modeLine !== null)
+      out.push(
+        cardRow(
+          'es-rep-mode',
+          L('권한 모드', 'Modes'),
+          [
+            <Box key="es-rep-mode-tx" flexGrow={1} flexShrink={1} minWidth={0}>
+              <Text key="es-rep-mode-t">{modeLine}</Text>
+            </Box>,
+            canAuto ? <Button key="es-kids-auto" variant="secondary" label={L('하위 모두 자동으로', 'All below to Auto')} onPress={() => acts.kidsAuto?.()} /> : null,
+          ],
+        ),
+      )
+    if (pu.kidsAsk && pu.kidsAsk.length > 0) out.push([kidsAskCard(pu.kidsAsk)])
     if (kids.length === 0) out.push(cardRow('es-rep-none', null, subText(L('하위 세션이 없습니다.', 'No sessions below.'))))
     else {
       out.push([
@@ -2067,6 +2344,7 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
       ])
       out.push(cardRow('es-rep-recv', L('받는 법', 'Receive'), <Text>{v.settings.reports.value === 'app' ? L('앱 그대로', "The app's way") : L('모아 둠', 'Held in the panel')}</Text>, recvHelp))
     }
+    if (canFix && ended.length > 0) out.push([tidyBox(ended)])
     if (canFix) {
       out.push([
         ...cardRow(
@@ -2074,13 +2352,6 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
           L('손질', 'Manage'),
           [
             tagBox('es-rep-fix-tag', L('오케 몫', 'Orchestrator')),
-            ended.length > 1 ? (
-              v.isBypass ? (
-                <Button key="es-ended-all" variant="secondary" label={L('모두 보관', 'Archive all')} onPress={() => void acts.archiveAll(ended.map(r => r.id))} />
-              ) : (
-                tagBox('es-ended-auto', L('auto — 보관은 줄마다', 'auto — archive row by row'), 'warn')
-              )
-            ) : null,
             v.adopt.length > 0 ? <Button key="es-adopt-b" variant="secondary" label={L(`밑으로 붙이기 ${folds.has('adopt') ? '▾' : '▸'}`, `Put under this one ${folds.has('adopt') ? '▾' : '▸'}`)} onPress={() => acts.fold('adopt')} /> : null,
           ],
           kids.length === 0 ? { id: 'rep:fix', help: { tip: L('손질은 줄마다 ⋯ · 이 줄에서', 'Manage with ⋯ on each row · on this row'), lines: [fixLine] } } : undefined,
@@ -2869,6 +3140,7 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
         withLines('g', [
           setRow('peerrel', 'es-set-peerrel', L('보낸 세션 관계 알리기', 'Tell where the sender is'), sw(PEER_SWITCH, v.settings.peerRel, on => acts.pickPeerRel(on)), peerHelp),
           setRow('sessionrules', 'es-set-sessionrules', RULES_NAME(), sw(RULES_SWITCH, v.settings.sessionRules, on => acts.pickSessionRules(on)), SET_HELP.sessionRules),
+          setRow('mentioninfo', 'es-set-mentioninfo', L('글에 나온 세션 정보 붙이기', 'Add info on sessions you name'), sw(MENTION_SWITCH, v.settings.mentionInfo === true, on => acts.pickMentionInfo?.(on)), SET_HELP.mentionInfo),
         ]),
       )}
       {v.settings.mdLock ? setGroup('es-set-mdlock', 'mdlock-set', 'lock', L('md 잠금', '.md locks'), mdLockBody(v.settings.mdLock)) : null}

@@ -4,6 +4,28 @@ All notable changes to easy-session. Versions follow [Semantic Versioning](https
 
 **Update:** send Claude `Update this plugin: easy-session (claude plugin marketplace update easy-session, then claude plugin update easy-session@easy-session)`, or run those two lines in a shell, then restart Claude — see [Update](README.md#update).
 
+## [0.1.31] — 2026-11-23
+
+### New
+- **No more messages dropped over permission modes** — when the receiving session is in Bypass permissions or plan mode and this one isn't, the app holds a message Claude sends and drops it after a few minutes. Now **Send** in the Above tile shows three choices in place of the send box there: **Send as a card**, **Lower it to Auto, then send** (after its turn ends if it is working — if it can't be lowered within 30 minutes, the text stays as a card) and **Raise this session to Bypass**. When the receiver is a parent that holds reports in its panel, the text goes there as a card without asking. When Claude tries such a send itself, it is refused with what to do instead (write it in the last answer, set its own child session to Auto, or ask you).
+- **Permission modes below · All below to Auto** — the Below tile shows a *Modes* line with the counts, and each row's mode and last activity. In a main or orchestrator session, **All below to Auto** at the right of that line sets the sessions below in Bypass permissions to Auto (after their turn if they are working; sessions put under this one only in the session tree are asked about once).
+- **Tidy ended** — when sessions below have ended, the Below tile gets a **Tidy ended** box. In Bypass permissions **Tidy** unpins and archives them all at once; in any other mode it offers **Switch this session to Bypass** (the app's approval card once) or **Ask Claude row by row**.
+- **Asks about leftover messages before archiving or ending** — before Archive, End or Archive all on another session, when messages are left with it (ones it sent that you haven't taken, ones you sent it that it hasn't read), a card asks first: **Take and archive**, **Delete and archive** or **Keep and archive**. What you chose is left as one line in the conversation.
+- **Accept everything · Reject everything** — when a tile holds messages from two or more senders, a line at the top shows "N senders · M messages" with **Accept everything** (one turn) and **Reject everything** (it asks once — "Deletes M messages — can't be undone" — before deleting).
+- **Add info on sessions you name** — Settings → Messages. When your own message names another session by its title, Claude gets one line on it (title, id, permission mode, working or idle, above or below, and more). Off at first.
+- **Looks done** — a row in the Below tile whose session's last answer ends with both closing lines, Remaining and Decisions, saying none gets *Looks done* and **End**. The end is recorded only when you press it.
+- **A top-level solo session that opens sessions below** — **Now** asks "make this an orchestrator? At the top, it becomes the main".
+
+### Changed
+- **Session rules (send check)** — when the receiving session has been idle for more than 60 minutes, the send stops once with a note that waking it re-reads everything from the start (the same send again goes through). A send by a title that two or more live sessions share is stopped with a request to use the `local_` id.
+- **Messages of archived sessions** — kept messages from an archived session show *Archived* on their card, and a sent message to an archived session shows *Receiver archived*.
+- **Delete all → Reject all** — the button at the head of a sender's held reports now matches the single **Reject**.
+
+### Fixed
+- **Panel stuck on "Nothing to show yet"** — when drawing the panel fails, it still draws "Sessions · Loading — drawing again shortly" and draws again soon. When the screen is attached but nothing was drawn, it draws again after 3, 6 and 12 seconds. The reasons go to `diag/pane-events.json` in the data folder (last 200 lines, not shown on screen).
+
+Bug report 2026-11-20 applied — the session rules' idle-session and shared-title checks, **Now** when a top-level solo session opens sessions below, and one line in the guide on when a session counts as ended.
+
 ## [0.1.30] — 2026-11-20
 
 ### Changed
