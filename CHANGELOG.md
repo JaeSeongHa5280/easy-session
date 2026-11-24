@@ -4,6 +4,21 @@ All notable changes to easy-session. Versions follow [Semantic Versioning](https
 
 **Update:** send Claude `Update this plugin: easy-session (claude plugin marketplace update easy-session, then claude plugin update easy-session@easy-session)`, or run those two lines in a shell, then restart Claude — see [Update](README.md#update).
 
+## [0.1.32] — 2026-11-24
+
+### Changed
+- **Fewer buttons to press** — each panel row keeps one gray button for its main action; the rest are text buttons. A Below row's actions are split into two lines, **Messages** and **Wrap up**, and the row's "Accept N" button became **N received ›** on the second line, which opens them for **Accept all**. **Detach** is a red-bordered warning button.
+- **The card before Archive or End opens under the row you pressed** (0.1.31 showed it at the top of the Below tile). Its head reads "Before you end — <title>", so what it asks comes first, and the count of leftover messages is taken again each time it draws.
+- **A *Held* line in the Above tile** — when reports of yours are still waiting in the receiving box of the session above, it shows how many.
+- **A top-level solo session that opens sessions below** — **Now** asks "make this the main session?" with **Make main**, and the role tile shows **Make main** at the top too (0.1.31 asked "make this an orchestrator?", which surprised by making it the main).
+- **The advisor is per session** — from Claude Code 2.1.330, the advisor easy-session changes applies to that session only. The default in your settings file stays as it is; type `/advisor <model>` in the input yourself to change it. The cell above the input and Settings show the value set for the session. A change that can't apply to this conversation until /clear or /compact (between models, in a conversation that already has the advisor on) is set back to the previous value with a note — two `/advisor` lines are left in the conversation.
+- **The panel's first draw leaves archived sessions for later** — it draws without reading the records of archived sessions, then reads them once and draws again. Archived rows below can be missing for a moment on that first draw.
+
+### Fixed
+- **Picking an advisor didn't stick, and the note was garbled** — on Claude Code 2.1.330 the picked value didn't stay in the cell, and the note read like "Set the advisor to Opus 5.5 for this session — run /advisor …".
+- **Hover tips piled up and stayed** — the tips on the line above the input and in the panel now work as in easy-compact: no tip left behind after a press, no tips stacked on each other.
+- **End and Archive on a Below row looked like they did nothing** — the card they open showed at the top of the tile, out of sight (see "under the row you pressed" above). Each press now leaves one line in `diag/pane-events.json` in the data folder (not shown on screen).
+
 ## [0.1.31] — 2026-11-23
 
 ### New

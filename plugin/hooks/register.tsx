@@ -8,6 +8,7 @@ import type { CommandInfo, EngineInterface, FsEntry, Register } from 'claude-cod
 
 import type { AdvisorCall, AdvisorShare, AdvisorUse, BoardFile, ChangeGroup, CleanScan, EndRecord, EndedKid, LowerJob, MatchAsk, OpenRow, OutItem, RegistryEntry, RelayFound, RelayMark, RelayPending, HeldBox, HeldReport, NavNode, PanelUi, PlanKind, PreAsk, SessionMeta, StoredPlan, TreeLinks, UpdateState } from '../types'
 import type { AdvisorPose } from './advisor-char'
+import { ADVISORS, advisorAlias, advisorKeptToast, advisorToast, readAdvisorAnswer } from './advisor-say'
 import {
   dropReason,
   INDEX_FILE,
@@ -1476,7 +1477,7 @@ const PANE_EVENT_REPEAT_MS = 60_000
 /** ⓑ 화면이 붙은 뒤 그림이 없으면 다시 그리기를 부르는 때 ★(세 번까지) · 그 뒤 그침 줄 */
 const UNSTICK_AT = [3_000, 6_000, 12_000] as const
 const UNSTICK_GIVE_UP_MS = 24_000
-type PaneEventKind = 'error' | 'light' | 'unstick' | 'attach' | 'detach' | 'slow'
+type PaneEventKind = 'error' | 'light' | 'unstick' | 'attach' | 'detach' | 'slow' | 'press'
 type PaneEvent = { at: number; kind: PaneEventKind; session: string | null; surface: string | null; ms?: number; detail?: string }
 let paneEvents: Omit<PaneEvent, 'session'>[] = []
 let paneFlushSet = false
@@ -1539,11 +1540,15 @@ function notePaneEvent($: EngineInterface, ev: Omit<PaneEvent, 'session'>, repea
   })
 }
 
+function notePress($: EngineInterface, what: string): void {
+  void $.clock.now().then(at => notePaneEvent($, { at, kind: 'press', surface: null, detail: what }), () => {})
+}
+
 /** diag/pane-events.json 꼴 — 깨졌거나 꼴이 다르면 빈 목록(새로 씀). 줄은 at · kind 가 맞는 것만 */
 function parsePaneEvents(text: string): PaneEvent[] {
   const v = jsonOf(text)
   const items = Array.isArray(v?.items) ? (v.items as unknown[]) : []
-  const kinds: readonly string[] = ['error', 'light', 'unstick', 'attach', 'detach', 'slow']
+  const kinds: readonly string[] = ['error', 'light', 'unstick', 'attach', 'detach', 'slow', 'press']
   return items.flatMap(x => {
     const o = asObj(x)
     if (typeof o?.at !== 'number' || typeof o.kind !== 'string' || !kinds.includes(o.kind)) return []
@@ -1612,10 +1617,26 @@ function drawnSize(tree: unknown): number {
   return JSON.stringify(tree, (_k, v: unknown) => (typeof v === 'function' ? '#'.repeat(40) : v)).length
 }
 
+let allReading = false
+function kickAllRead($: EngineInterface): void {
+  if (allReading || app.isAllRead) return
+  allReading = true
+  $.clock.after(1, () => {
+    void refreshApp($, true)
+      .then(() => (app.isAllRead ? update($, appTick, n => n + 1) : undefined))
+      .catch((err: unknown) => log($, `보관 메타 읽기 실패 — ${String(err)}`))
+      .finally(() => {
+        allReading = false
+      })
+  })
+}
+
 async function loadPanelView($: EngineInterface, pu: PanelUi, surface?: string): Promise<PanelView | null> {
-  // 패널을 연 세션은 보관 메타까지 한 번 다 읽는다(★16 「보관 N」 — 노트 register.md#refreshApp). 엔진 세션은 등록부로 지은 이 세션 하나(노트 register.md#sessionSelf)
-  const s = await sessionSelf($, surface, true)
+  // 패널을 연 세션은 보관 메타까지 한 번 다 읽는다(★16 「보관 N」 — 노트 register.md#refreshApp). 0.1.32: 첫 그림은 안 보관만 읽고 보관은 그린 뒤(kickAllRead).
+  // 엔진 세션은 등록부로 지은 이 세션 하나(노트 register.md#sessionSelf)
+  const s = await sessionSelf($, surface, app.isAllRead)
   if (!s) return null
+  if (s.isApp) kickAllRead($)
   const now = await $.clock.now()
   const ended = await refreshEnded($)
   const links = await storeLinks($)
@@ -1709,6 +1730,7 @@ async function loadPanelView($: EngineInterface, pu: PanelUi, surface?: string):
     upPick,
     canDetach,
     heldItems: await readHeld($, s.selfId),
+    upHeld: up ? (await readHeld($, up.id)).filter(r => r.from === s.selfId).length : 0,
     accept: typeof tokens === 'number' && tokens > 0 ? { tokens, isCold: isCold(selfMeta.lastAt, now) } : null,
     board: orche.has(s.selfId) ? await boardView($, s.selfId) : null,
     boardHint: orche.has(s.selfId) ? null : await boardHint($, tree, orche, owner),
@@ -2493,13 +2515,27 @@ async function recapAct($: EngineInterface): Promise<void> {
   await $.command.run({ command: 'recap' }).catch((err: unknown) => toast($, L(`요약하지 못했습니다 — ${firstLine(String(err))}`, `Couldn't sum up — ${firstLine(String(err))}`)))
 }
 
-const ADVISORS = ['off', 'sonnet', 'opus', 'fable'] as const
+// 칸 값 = 엔진이 「이 세션만 바꿨다」고 답한 값(세션마다 · 그때 설정 값과 함께), 없거나 설정 값이 그 뒤 바뀌었으면 설정 값. fable 은 띠 안 확인 카드부터
+const ADV_KEY = 'adv:'
+
+async function advisorRaw($: EngineInterface): Promise<string> {
+  const v = await $.settings.read({ key: 'advisorModel' }).catch(() => undefined)
+  return typeof v === 'string' ? v.trim() : ''
+}
 
 async function advisorOf($: EngineInterface): Promise<string> {
-  const v = await $.settings.read({ key: 'advisorModel' }).catch(() => undefined)
-  if (typeof v !== 'string' || v.trim() === '') return 'off'
-  const low = v.toLowerCase()
-  return ADVISORS.find(a => a !== 'off' && low.includes(a)) ?? v
+  const raw = await advisorRaw($)
+  const id = await selfKey($)
+  const kept = (id ? await $.store.get(ADV_KEY + id).catch(() => undefined) : undefined) as { value?: unknown; base?: unknown } | undefined
+  return kept && typeof kept.value === 'string' && kept.base === raw ? kept.value : advisorAlias(raw)
+}
+
+/** 엔진이 이 세션만 바꿨으면 그 값을 적고(value), 기본값에 썼으면(옛 엔진 — null) 지운다 */
+async function keepAdvisor($: EngineInterface, value: string | null): Promise<void> {
+  const id = await selfKey($)
+  if (!id) return
+  if (value === null) await $.store.delete(ADV_KEY + id).catch(() => {})
+  else await $.store.set(ADV_KEY + id, { value, base: await advisorRaw($) }).catch(() => {})
 }
 
 function advisorChoice(value: string): Choice {
@@ -2516,32 +2552,27 @@ async function setAdvisor($: EngineInterface, value: string): Promise<void> {
     return
   }
   await update($, fableAsk, () => false)
-  if (value !== now) await runAdvisor($, value)
+  if (value !== now) await runAdvisor($, value, now)
 }
 
-async function runAdvisor($: EngineInterface, value: string): Promise<void> {
-  const r = await $.command.run({ command: 'advisor', args: value }).catch((err: unknown) => ({ text: L(`advisor 를 바꾸지 못했습니다 — ${String(err)}`, `Couldn't change the advisor — ${String(err)}`) }))
-  if (r.text) toast($, advisorToast(r.text), ADVISOR_SAID.test(r.text))
+//
+async function runAdvisor($: EngineInterface, value: string, prev: string): Promise<void> {
+  const run = (v: string) =>
+    $.command.run({ command: 'advisor', args: v }).then(
+      r => r.text ?? '',
+      (err: unknown) => L(`advisor 를 바꾸지 못했습니다 — ${String(err)}`, `Couldn't change the advisor — ${String(err)}`),
+    )
+  const text = await run(value)
+  const a = readAdvisorAnswer(text)
+  if (a.said && a.isLater && prev !== value) {
+    const back = readAdvisorAnswer(await run(prev))
+    await keepAdvisor($, back.said ? (back.isSession ? prev : null) : a.isSession ? value : null)
+    toast($, advisorKeptToast(text, back.said, value))
+  } else {
+    if (a.said) await keepAdvisor($, a.isSession ? value : null)
+    if (text) toast($, advisorToast(text), a.said)
+  }
   await update($, appTick, n => n + 1)
-}
-
-// advisor 명령이 바꿨다고 답한 글(advisorToast 가 우리말로 옮기는 둘)
-const ADVISOR_SAID = /Advisor disabled|Advisor set to/i
-
-function advisorToast(text: string): string {
-  const set = /Advisor set to ([^\n]+?)\.?\s*(?:\n|$)/i.exec(text)
-  const said = /Advisor disabled/i.test(text)
-    ? L('advisor 를 껐습니다', 'Turned the advisor off')
-    : set
-      ? L(`advisor 를 ${set[1].trim()} ${josa(set[1].trim(), '으로', '로')} 바꿨습니다`, `Set the advisor to ${set[1].trim()}`)
-      : null
-  if (!said) return text
-  const keeps = /current conversation keeps (.+?) as its advisor model/i.exec(text)
-  const notes = [
-    ...(keeps ? [L(`이 대화는 /clear · /compact 전까지 ${keeps[1]} 그대로`, `this conversation keeps ${keeps[1]} until /clear or /compact`)] : []),
-    ...(/will not activate on the main model/i.test(text) ? [L('이 세션 메인 모델엔 안 걸림 · 하위 에이전트만', "not on this session's main model · subagents only")] : []),
-  ]
-  return [said, ...notes].join(' · ')
 }
 
 /** 빠른 줄 고르기가 답하는 중에 오면 바꾸지 않는다 — 응답 중 고른 값이 첫 항목(off)으로 와 전역 advisor 가 꺼졌다(0.1.1 실측) */
@@ -2719,7 +2750,7 @@ function fableActs($: EngineInterface): FableActs {
   return {
     confirm: async () => {
       await update($, fableAsk, () => false)
-      await runAdvisor($, 'fable')
+      await runAdvisor($, 'fable', await advisorOf($))
     },
     dismiss: async () => {
       await update($, fableAsk, () => false)
@@ -2906,6 +2937,7 @@ async function preAsk($: EngineInterface, act: PreAsk['act'], ids: readonly stri
 // 누를 때 다시 센다(띄운 사이 글이 늘 수 있다). 고른 결과는 끝남 기록 파일 msgs 칸에, 보관 · 끝내기는 묻기 없이 이어서
 async function preGo($: EngineInterface, choice: 'take' | 'drop' | 'keep' | null): Promise<void> {
   const pre = (await read($, panelUi)).pre ?? null
+  notePress($, `pre:${choice ?? 'x'}:${pre?.act ?? 'none'}`)
   await update($, panelUi, u => ({ ...u, pre: null }))
   const selfId = await selfAppId($)
   if (!pre || choice === null || !selfId) return redraw($)
@@ -2925,6 +2957,7 @@ async function preGo($: EngineInterface, choice: 'take' | 'drop' | 'keep' | null
   if (pre.act === 'finish') await finishAct($, pre.ids[0]!, true, o)
   else if (pre.act === 'archive') await archiveAct($, pre.ids[0]!, true, o)
   else await archiveAllAct($, pre.ids, o)
+  notePress($, 'pre:done')
 }
 
 // 먼저 이지세션 코드가 바로 부르고, 안 되면(자동 모드에서 앱이 플러그인 부름을 막는 등 — 실물 미확인) 입력칸에 지시 글 → 사람이 보내면 Claude 가 같은 도구로
@@ -4112,8 +4145,14 @@ function panelActs($: EngineInterface): PanelActs {
     fold: (key, on) => set(u => ({ ...u, folds: on === undefined || u.folds.includes(key) !== on ? toggleFold(u.folds, key) : u.folds })),
     ask: what => set(u => ({ ...u, ask: what })),
     pin: async (id, on) => void (await pinAct($, id, on)),
-    finish: (id, on) => finishAct($, id, on),
-    archive: (id, on) => archiveAct($, id, on),
+    finish: (id, on) => {
+      notePress($, `finish:${on}`)
+      return finishAct($, id, on)
+    },
+    archive: (id, on) => {
+      notePress($, `archive:${on}`)
+      return archiveAct($, id, on)
+    },
     remoteOff: id => remoteOffAct($, id),
     remoteOn: id => remoteOnAct($, id),
     accept: keys => {

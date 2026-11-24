@@ -140,6 +140,8 @@ export type PanelView = {
   mainTitle: string | null
   /** 위 세션(패널 세션 트리 위 · 살아 있음) — 없으면 null. tag = 앞 차수(이 세션이 인계받은 세션 — 세션 트리 ②) · 연 세션(앱에서 연 세션) · 주인(사람이 정했거나 인계로 넘어옴) */
   up: SendRow | null
+  /** 이 세션이 보낸 보고 가운데 위 세션 받은 칸(모아 둠)에 아직 남은 것 수 — 「위 세션」 칸 「모아 둠」 줄(0.1.32). 노트 panel.md#upHeld */
+  upHeld?: number
   /** 이 세션을 인계받은 뒤 차수가 이 세션 아래에 있을 때(세션 트리 ② — 둘 다 살아 있고 앱 자식) 그 id — 하위 줄 「뒤 차수」 표지. 없으면 null */
   heir: string | null
   /** 메인(`>>메인` 과 같은 셈 — 노트 panel.md#compose) — 이 세션 · 위 세션이면 null(「위 세션」 칸 메인 줄 — 0.1.29 ③ ⓓ) */
@@ -678,8 +680,13 @@ const SET_HELP: Record<'display' | 'advisor' | 'autoPin' | 'autoUnpin' | 'autoGr
   },
   get advisor() {
     return {
-      tip: L('모든 세션에 걸립니다 · 입력창 위 줄과 같은 값', 'Applies to every session · same value as on the line above the input'),
-      lines: [L('모든 세션에 걸리는 설정입니다. 입력창 위 줄과 같은 값입니다.', 'A setting for every session. The same value as on the line above the input.')],
+      tip: L('이 세션에 걸립니다 · 입력창 위 줄과 같은 값', 'Applies to this session · same value as on the line above the input'),
+      lines: [
+        L(
+          '이 세션에 걸리는 설정입니다. 입력창 위 줄과 같은 값입니다. 모든 세션의 기본값은 입력칸에 /advisor <모델> 을 직접 쳐야 바뀝니다.',
+          "A setting for this session. The same value as on the line above the input. To change every session's default, type /advisor <model> in the input yourself.",
+        ),
+      ],
     }
   },
   get autoPin() {
@@ -909,18 +916,28 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
     </Box>
   )
 
-  // 단추 key 는 옛 ⋯ 목록 그대로(es-m-<이름>-<짧은 id>). 떼어 내기는 앱이 뗄 수 있는 세션만(canDetach — 이 세션이 연 세션)
+  // 「마무리」 줄([끝내기] 회색 하나 · 보관 글 단추 · 떼어 내기 경고 단추). 단추 key 는 옛 ⋯ 목록 그대로(es-m-<이름>-<짧은 id>). 떼어 내기는 앱이 뗄 수 있는 세션만(canDetach)
   const kidFix = (r: FamilyRow) => {
-    const item = (name: string, label: string, onPress: () => unknown) => <Button key={`es-m-${name}-${k(r.id)}`} variant="secondary" label={label} onPress={onPress} />
+    const el = k(r.id)
+    const item = (name: string, label: string, onPress: () => unknown) => linkButton(`es-m-${name}-${el}`, label, onPress)
+    const fixRow = (key: string, name: string, parts: unknown[]) => (
+      <Box key={key} columnGap={1} rowGap={0.4} flexWrap="wrap" alignItems="center" minWidth={0}>
+        <Box width={FIX_LABEL_W} flexShrink={0}>
+          <Text color="subtle" size="footnote">
+            {name}
+          </Text>
+        </Box>
+        {parts}
+      </Box>
+    )
     return (
-      <Box key={`es-fix-${k(r.id)}`} columnGap={0.5} rowGap={0.4} flexWrap="wrap" alignItems="center" marginTop={0.3} marginLeft={2.5} minWidth={0}>
-        {tagBox(`es-fix-tag-${k(r.id)}`, L('오케 몫', 'Orchestrator'))}
-        {item('send', L('보내기', 'Send'), () => acts.send(r.id))}
-        {item('clean', L('정리 부탁', 'Ask to clean up'), () => acts.clean(r.id))}
-        {item('end', r.isEnded ? L('끝남 풀기', 'Unmark ended') : L('끝내기', 'End'), () => acts.finish(r.id, !r.isEnded))}
-        {item('merge', L('일 합치기', 'Merge work'), () => acts.merge(r.id))}
-        {item('arch', L('보관', 'Archive'), () => acts.archive(r.id, true))}
-        {v.canDetach.has(r.id) ? withTip(ui, `es-m-detach-box-${k(r.id)}`, item('detach', L('떼어 내기', 'Detach'), () => acts.detach(r.id)), L('되돌릴 수 없습니다 — 그 세션 보고가 더는 안 옵니다', "Can't be undone — its reports stop coming")) : null}
+      <Box key={`es-fix-${el}`} flexDirection="column" rowGap={0.3} marginTop={0.3} marginLeft={2.5} minWidth={0}>
+        {fixRow(`es-fix-msg-${el}`, L('메시지', 'Messages'), [item('send', L('보내기', 'Send'), () => acts.send(r.id)), item('clean', L('정리 부탁', 'Ask to clean up'), () => acts.clean(r.id)), item('merge', L('일 합치기', 'Merge work'), () => acts.merge(r.id))])}
+        {fixRow(`es-fix-end-${el}`, L('마무리', 'Wrap up'), [
+          <Button key={`es-m-end-${el}`} variant="secondary" label={r.isEnded ? L('끝남 풀기', 'Unmark ended') : L('끝내기', 'End')} onPress={() => acts.finish(r.id, !r.isEnded)} />,
+          item('arch', L('보관', 'Archive'), () => acts.archive(r.id, true)),
+          v.canDetach.has(r.id) ? dangerButton(`es-m-detach-${el}`, L('떼어 내기', 'Detach'), () => acts.detach(r.id), L('되돌릴 수 없습니다 — 그 세션 보고가 더는 안 옵니다', "Can't be undone — its reports stop coming")) : null,
+        ])}
       </Box>
     )
   }
@@ -1075,7 +1092,7 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
           </Box>
           <Box columnGap={0.5} alignItems="center" flexShrink={0}>
             {isLive ? <Button key={`es-m-send-${el}`} variant="secondary" label={pu.sending === r.id ? L('닫기', 'Close') : L('보내기', 'Send')} onPress={() => acts.send(r.id)} /> : null}
-            <Button key={`es-m-go-${el}`} variant="secondary" label={L('가기', 'Go')} onPress={() => acts.go(r.id)} />
+            {isLive ? <Button key={`es-m-go-${el}`} plain label={L('가기', 'Go')} onPress={() => acts.go(r.id)} /> : <Button key={`es-m-go-${el}`} variant="secondary" label={L('가기', 'Go')} onPress={() => acts.go(r.id)} />}
           </Box>
         </Box>
         {metaLine(r)}
@@ -1179,19 +1196,25 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
             {idle}
             {v.heir === r.id ? tagBox(`es-kheir-${el}`, L('다음 차수', 'Next round')) : null}
             {notOpened ? tagBox(`es-kat-${el}`, how) : null}
-            {mine.length > 0 ? <Button key={`es-take-${el}`} variant="secondary" label={L(`수락 ${mine.length}`, `Take ${mine.length}`)} onPress={() => acts.accept(mine.map(heldKey))} /> : null}
+            {/* 노트: panel.md#kidRow — 0.1.32 J2 안 A: 회색 단추는 그 줄의 주 동작 하나(끝난 듯 → 끝내기 · 끝남 → 보관 · 그 밖 → 가기), 나머지는 글 단추 */}
             {isEnding ? <Button key={`es-kend-${el}`} variant="secondary" label={L('끝내기', 'End')} onPress={() => acts.finish(r.id, true)} /> : null}
             {r.isEnded && canFix ? <Button key={`es-end-arch-${el}`} variant="secondary" label={L('보관', 'Archive')} onPress={() => void acts.archive(r.id, true)} /> : null}
-            <Button key={`es-m-go-${el}`} variant="secondary" label={L('가기', 'Go')} onPress={() => acts.go(r.id)} />
+            {isEnding || (r.isEnded && canFix) ? <Button key={`es-m-go-${el}`} plain label={L('가기', 'Go')} onPress={() => acts.go(r.id)} /> : <Button key={`es-m-go-${el}`} variant="secondary" label={L('가기', 'Go')} onPress={() => acts.go(r.id)} />}
             {hasMore ? more : null}
           </Box>
         </Box>
         {/* 노트: panel.md#kidRow — 0.1.31 ⑦ 아랫줄 맨 앞 권한 모드 낱말(앱 메뉴 이름) · 마지막 활동 */}
-        {r.mode ? (
-          <Box key={`es-kmode-${el}`} marginLeft={2.5} minWidth={0}>
-            <Text color="subtle" size="footnote" wrap="truncate-end">
-              {`${modeName(r.mode)}${r.lastAt !== null ? ` · ${clockText(r.lastAt, v.now)}` : ''}`}
-            </Text>
+        {r.mode || mine.length > 0 ? (
+          <Box key={`es-kmode-${el}`} columnGap={1} alignItems="center" marginLeft={2.5} minWidth={0}>
+            {r.mode ? (
+              <Box flexShrink={1} minWidth={0}>
+                <Text color="subtle" size="footnote" wrap="truncate-end">
+                  {`${modeName(r.mode)}${r.lastAt !== null ? ` · ${clockText(r.lastAt, v.now)}` : ''}`}
+                </Text>
+              </Box>
+            ) : null}
+            {/* 노트: panel.md#kidRow — 0.1.32 J2 안 A: 받은 글 수는 글 단추 — 누르면 줄을 펴 글마다 수락 · 거절 · [전체 수락](0.1.31 「수락 N」 회색 단추를 갈음) */}
+            {mine.length > 0 ? <Button key={`es-take-${el}`} plain label={L(`받은 글 ${mine.length} ${isOpen ? CHEVRON.open : CHEVRON.closed}`, `${mine.length} received ${isOpen ? CHEVRON.open : CHEVRON.closed}`)} onPress={() => acts.more(r.id)} /> : null}
           </Box>
         ) : null}
         {needsLine(r)}
@@ -1217,6 +1240,8 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
           </Box>
         ) : null}
         {pu.sending === r.id && isLive ? sending(el, r.id, r.title) : null}
+        {/* 노트: panel.md#preCard — 0.1.32 J3: 보관 · 끝내기 전 남은 메시지 카드는 누른 줄 밑 */}
+        {pu.pre && pu.pre.act !== 'tidy' && pu.pre.ids[0] === r.id ? preCard(pu.pre) : null}
       </Box>
     )
   }
@@ -1318,6 +1343,11 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
       box: { borderStyle: 'single', borderColor: 'error', paddingX: 1, paddingY: 0.25 },
     })
 
+  // 줄마다 되풀이되는 [가기]는 흰 글 단추(plain — 덮개 꼴은 줄마다 약 300 자라 최악 경우가 그리기 선을 넘었다)
+  const linkButton = (key: string, label: string, onPress: () => unknown) => pressBox(ui, key, { content: [<Text color="suggestion">{label}</Text>], cover: coverCells(textCh(label) + 1), onPress, box: { paddingX: 1 } })
+
+  const FIX_LABEL_W = Math.ceil(Math.max(textCh(L('메시지', 'Messages')), textCh(L('마무리', 'Wrap up')))) + 1
+
   // 목록 상한 — 넘으면 「나머지 N」(펼쳐도 남아 다시 접는다). 그리기 크기 대책(register.md#sizeGuard). key = 접힘 열쇠(sibs · kids)
   const capped = (list: readonly FamilyRow[], key: string, draw: (r: FamilyRow) => unknown): unknown[] => {
     const isAll = folds.has(key)
@@ -1396,7 +1426,7 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
           <Box flexGrow={1} />
           {/* 단추 둘은 머리 줄의 직접 자식(감싼 상자 없이 — 같은 간격 · 정렬, 빈 칸 상자가 오른쪽으로 민다). 0.1.31 8c 맨 위 줄 몫을 0.1.3 최악 경우 그리기 한도 안에서 마련 */}
           {all.length > 1 ? <Button key={`es-acc-all-${el}`} variant="secondary" label={L('전체 수락', 'Accept all')} onPress={() => acts.accept(keys)} /> : null}
-          {all.length > 1 ? <Button key={`es-rej-all-${el}`} variant="secondary" label={L('전체 거절', 'Reject all')} onPress={() => acts.reject(keys)} /> : null}
+          {all.length > 1 ? <Button key={`es-rej-all-${el}`} plain dimColor label={L('전체 거절', 'Reject all')} onPress={() => acts.reject(keys)} /> : null}
         </Box>
         {shown.map(heldItem)}
         {isLast && cost ? (
@@ -1481,7 +1511,7 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
         <Box key={`${key}-all`} columnGap={1} rowGap={0.4} alignItems="center" justifyContent="flex-end" flexWrap="wrap">
           <Text bold>{L(`보낸 세션 ${n} · 글 ${list.length}`, `${plural(n, 'sender')} · ${plural(list.length, 'message')}`)}</Text>
           <Button key={`${key}-acc-every`} variant="secondary" label={L('모두 수락', 'Accept everything')} onPress={() => acts.accept(keys)} />
-          <Button key={`${key}-rej-every`} variant="secondary" label={L('모두 거절', 'Reject everything')} onPress={() => acts.ask(isAsking ? null : 'rejectAll')} />
+          <Button key={`${key}-rej-every`} plain dimColor label={L('모두 거절', 'Reject everything')} onPress={() => acts.ask(isAsking ? null : 'rejectAll')} />
         </Box>,
       ],
     ]
@@ -1534,7 +1564,7 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
         <Box key={`es-mc-foot-${el}`} columnGap={0.5} alignItems="center" marginTop={0.4} minWidth={0}>
           {v.accept?.isCold ? mark(ui, 'snowflake', L('캐시 식음', 'Cold')) : null}
           <Box flexGrow={1} minWidth={0}>
-            <Text color="subtle" size="footnote" wrap="truncate-end">
+            <Text color="subtle" size="footnote">
               {cost ? L(`수락하면 ${cost}`, `Accept: ${cost}`) : ''}
             </Text>
           </Box>
@@ -1582,7 +1612,7 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
     }
     const kidFrom = new Set(heldKid.map(r => r.from)).size
     const b = v.board
-    // 0.1.31 H1: 맨 위 단독(solo — 세션 트리 위가 없음)이 자식을 열어도 묻는다 — 오케로 바꾸면 맨 위라 메인이 된다(roleOf 는 그대로 — 사용자 11-19)
+    // 0.1.31 H1: 맨 위 단독(solo — 세션 트리 위가 없음)이 자식을 열어도 묻는다. 0.1.32 J1: 맨 위는 바꾸면 메인이라 「메인 세션으로 바꿀까요?」 · [메인으로](하는 일은 같은 오케 표시 — roleOf 그대로)
     const openedNow = kids.filter(r => v.opened.has(r.id) && !r.isEnded && r.id !== v.heir).length
     const askOrche =
       (v.role === 'sub' || v.role === 'solo') && openedNow > 0 && !folds.has(NOW_ORCHE_NO)
@@ -1590,9 +1620,9 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
             'es-now-orche',
             'branch',
             v.role === 'solo'
-              ? L(`하위 세션 ${openedNow}개가 생김 — 오케로 바꿀까요? 맨 위라 메인이 됩니다`, `${plural(openedNow, 'session')} opened below — make this an orchestrator? At the top, it becomes the main`)
+              ? L(`하위 세션 ${openedNow}개가 생김 — 메인 세션으로 바꿀까요?`, `${plural(openedNow, 'session')} opened below — make this the main session?`)
               : L(`하위 세션 ${openedNow}개가 생김 — 오케로 바꿀까요?`, `${plural(openedNow, 'session')} opened below — make this an orchestrator?`),
-            <Button key="es-now-orche-b" variant="secondary" label={L('오케로', 'Make orchestrator')} onPress={() => acts.orche(v.selfId, true)} />,
+            <Button key="es-now-orche-b" variant="secondary" label={v.role === 'solo' ? L('메인으로', 'Make main') : L('오케로', 'Make orchestrator')} onPress={() => acts.orche(v.selfId, true)} />,
             <Button key="es-now-orche-no" plain dimColor label={L('그대로', 'Keep')} onPress={() => acts.fold(NOW_ORCHE_NO, true)} />,
             true,
           )
@@ -1831,14 +1861,15 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
     )
   }
 
-  // 안 받은 글이 있으면 [받고 · 지우고 · 남기고 <동작>], 없으면 단추 하나(붙은 세션만이면 [같이 보관]). 센 값은 누를 때 register 가 담은 것(그릴 때 파일을 안 읽음)
+  // 안 받은 글이 있으면 [받고 · 지우고 · 남기고 <동작>], 없으면 단추 하나(붙은 세션만이면 [같이 보관]). 보낸 글 · 붙은 세션 수는 누를 때 register 가 담은 것
   const preCard = (pre: PreAsk) => {
     const isTidy = pre.act === 'tidy'
     const act = pre.act === 'finish' ? L('끝내기', 'end') : L('보관', 'archive')
-    const one = pre.rows[0]
-    const head = isTidy ? L(`끝난 하위 ${pre.ids.length} 보관 전에`, `Before archiving ${plural(pre.ids.length, 'ended session')} below`) : L(`${bareTitle(one?.title ?? '')} ${pre.act === 'finish' ? '끝내기' : '보관'} 전에`, `Before you ${act} ${bareTitle(one?.title ?? '')}`)
-    const hasIn = pre.rows.some(r => r.inN > 0)
-    const msgRows = pre.rows.filter(r => r.inN > 0 || r.outN > 0)
+    const rows = pre.rows.map(r => ({ ...r, inN: v.heldItems.filter(x => x.from === r.id).length }))
+    const one = rows[0]
+    const head = isTidy ? L(`끝난 하위 ${pre.ids.length} 보관 전에`, `Before archiving ${plural(pre.ids.length, 'ended session')} below`) : L(`${pre.act === 'finish' ? '끝내기' : '보관'} 전에 — ${bareTitle(one?.title ?? '')}`, `Before you ${act} — ${bareTitle(one?.title ?? '')}`)
+    const hasIn = rows.some(r => r.inN > 0)
+    const msgRows = rows.filter(r => r.inN > 0 || r.outN > 0)
     const line = (key: string, text: string, tone?: 'warning') => (
       <Box key={key} minWidth={0}>
         <Text color={tone ?? 'subtle'} size="footnote">
@@ -1849,7 +1880,7 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
     const lines = isTidy
       ? [
           ...(msgRows.length > 0 ? [line('es-pre-sum', L(`${pre.ids.length} 중 ${msgRows.length} 세션에 남은 메시지가 있습니다`, `${msgRows.length} of ${pre.ids.length} have messages left`))] : []),
-          ...pre.rows.flatMap(r => [
+          ...rows.flatMap(r => [
             ...(r.inN > 0 ? [line(`es-pre-in-${k(r.id)}`, L(`${bareTitle(r.title)} 안 받은 글 ${r.inN}`, `${bareTitle(r.title)}: ${r.inN} not taken`))] : []),
             ...(r.outN > 0 ? [line(`es-pre-out-${k(r.id)}`, L(`${bareTitle(r.title)} 안 읽힌 보낸 글 ${r.outN}`, `${bareTitle(r.title)}: ${r.outN} sent unread`))] : []),
             ...(r.attached > 0 ? [line(`es-pre-att-${k(r.id)}`, L(`${bareTitle(r.title)} 붙은 세션 ${r.attached}개 — 먼저 떼거나 같이 보관할지 정해 주세요`, `${bareTitle(r.title)}: ${plural(r.attached, 'attached session')} — detach first, or archive together`), 'warning')] : []),
@@ -1864,18 +1895,16 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
     const go = (choice: 'take' | 'drop' | 'keep') => () => void acts.pre?.(choice)
     const buttons = hasIn
       ? [
-          <Button key="es-pre-take" variant="secondary" label={label('받고', 'Take')} onPress={go('take')} />,
-          <Button key="es-pre-drop" variant="secondary" label={label('지우고', 'Delete')} onPress={go('drop')} />,
-          <Button key="es-pre-keep" variant="secondary" label={label('남기고', 'Keep')} onPress={go('keep')} />,
+          <Button key="es-pre-take" variant="primary" label={label('받고', 'Take')} onPress={go('take')} />,
+          linkButton('es-pre-drop', label('지우고', 'Delete'), go('drop')),
+          linkButton('es-pre-keep', label('남기고', 'Keep'), go('keep')),
         ]
       : [<Button key="es-pre-keep" variant="secondary" label={plainLabel} onPress={go('keep')} />]
     return (
       <Box key="es-pre" flexDirection="column" rowGap={0.2} borderStyle="single" borderColor="promptBorder" paddingX={0.6} paddingY={0.3} marginBottom={0.4} minWidth={0}>
         <Box key="es-pre-h" columnGap={1} alignItems="center" minWidth={0}>
           <Box flexGrow={1} flexShrink={1} minWidth={0}>
-            <Text bold wrap="truncate-end">
-              {head}
-            </Text>
+            <Text bold>{head}</Text>
           </Box>
           <Button key="es-pre-x" plain dimColor label="✕" onPress={() => void acts.pre?.(null)} />
         </Box>
@@ -1949,7 +1978,7 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
             </Box>
             <Box key="es-tidy-b" columnGap={1} rowGap={0.4} flexWrap="wrap" alignItems="center" marginTop={0.2} minWidth={0}>
               <Button key="es-tidy-bypass" variant="secondary" label={L('이 세션을 권한 무시로', 'Switch this session to Bypass')} onPress={() => void acts.selfBypass?.()} />
-              <Button key="es-tidy-claude" variant="secondary" label={L('Claude 에게 줄마다 맡기기', 'Ask Claude row by row')} onPress={() => void acts.archive(ended[0]!.id, true)} />
+              {linkButton('es-tidy-claude', L('Claude 에게 줄마다 맡기기', 'Ask Claude row by row'), () => void acts.archive(ended[0]!.id, true))}
             </Box>
             {small('es-tidy-s1', L('앞 단추는 앱 승인 카드 한 번 · 그 뒤로 이 세션은 검사 없이 실행', "The first shows the app's approval card once · after that this session runs without checks"))}
             {small('es-tidy-s2', L('줄마다 맡기면 보관 하나에 차례 하나 — 토큰이 듭니다', 'Row by row is one turn per archive — it costs tokens'))}
@@ -2063,7 +2092,7 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
       [
         ...cardRow('es-mgr-tidy', L('정리', 'Clean up'), [
           <Button key="es-s-clean" variant="secondary" label={L('정리', 'Clean up')} onPress={() => void acts.clean(v.selfId)} />,
-          <Button key="es-s-title" variant="secondary" label={L('제목 정리', 'Tidy title')} onPress={() => void acts.titleTidy()} />,
+          linkButton('es-s-title', L('제목 정리', 'Tidy title'), () => void acts.titleTidy()),
         ]),
         folds.has('clean-hint') ? (
           <Box key="es-clean-hint" paddingBottom={0.3}>
@@ -2094,7 +2123,7 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
       [
         ...cardRow('es-mgr-tidy', L('정리', 'Clean up'), [
           <Button key="es-s-clean" variant="secondary" label={L('정리', 'Clean up')} onPress={() => void acts.clean(v.selfId)} />,
-          <Button key="es-s-title" variant="secondary" label={L('제목 정리', 'Tidy title')} onPress={() => void acts.titleTidy()} />,
+          linkButton('es-s-title', L('제목 정리', 'Tidy title'), () => void acts.titleTidy()),
         ]),
         folds.has('clean-hint') ? (
           <Box key="es-clean-hint" paddingBottom={0.3}>
@@ -2160,16 +2189,8 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
       if (kids.length > 0) nos.push(no('es-r-no-unorche', L('오케 풀기', 'Step down'), L(`하위 ${kids.length}개가 아직 있음 — 다 끝난 뒤에(아니면 오케 인계)`, `${kids.length} below still open — after they end, or hand over`)))
       else buttons.push(<Button key="es-s-orche" variant="secondary" label={L('오케 풀기', 'Step down')} onPress={() => acts.orche(v.selfId, false)} />)
     }
-    if (role === 'sub' || role === 'solo') buttons.push(<Button key="es-s-orche" variant="secondary" label={L('오케로', 'Make orchestrator')} onPress={() => acts.orche(v.selfId, true)} />)
-    // 0.1.31 H1: 맨 위 단독이면 [오케로] 옆 흐린 한 줄 — 누르면 곧 메인
-    if (role === 'solo')
-      buttons.push(
-        <Box key="es-r-top-main" flexShrink={1} minWidth={0}>
-          <Text color="subtle" size="footnote">
-            {L('맨 위라 메인이 됩니다', 'At the top, it becomes the main')}
-          </Text>
-        </Box>,
-      )
+    // 0.1.32 J1: 맨 위 단독은 오케로 바꾸면 곧 메인이라 [메인으로](0.1.31 의 [오케로] 옆 흐린 줄 「맨 위라 메인이 됩니다」는 단추가 말해 뺌)
+    if (role === 'sub' || role === 'solo') buttons.push(<Button key="es-s-orche" variant="secondary" label={role === 'solo' ? L('메인으로', 'Make main') : L('오케로', 'Make orchestrator')} onPress={() => acts.orche(v.selfId, true)} />)
     if (role === 'sub' && canDetach) {
       buttons.push(withTip(ui, 'es-r-solo-box', <Button key="es-r-solo" variant="secondary" label={L('단독으로 — 떼어 내기', 'Solo — detach')} onPress={() => acts.detach(v.selfId)} />, L('되돌릴 수 없습니다 — 연 세션에 보고가 더는 안 갑니다', "Can't be undone — reports stop going to the session that opened this one")))
     }
@@ -2179,7 +2200,7 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
       const options = [{ value: 'app', label: L('위 세션 고르기', 'Pick the session above') }, ...up.choices.map(id => ({ value: id, label: fitCells(bareTitle(v.metas.get(id)?.title ?? id), 28) }))]
       buttons.push(<Select key="es-r-up" label={L('서브로', 'Sub of')} value={up.value} options={options} onSelect={(x: string) => (x === 'app' ? undefined : acts.setOwner(v.selfId, x))} />)
     }
-    // 맨 위 단독은 [오케로] 가 곧 메인이라 「메인으로」 안 됨 줄이 없다
+    // 맨 위 단독은 [메인으로](오케 표시)가 곧 메인이라 「메인으로」 안 됨 줄이 없다
     if (role === 'sub' || role === 'orche') nos.push(no('es-r-no-tomain', L('메인으로', 'Make main'), v.mainTitle ? L(`메인은 「${fitCells(bareTitle(v.mainTitle), 20)}」 — 메인 인계로만`, `The main is “${fitCells(bareTitle(v.mainTitle), 20)}” — only by handing the main over`) : L('이 세션 트리에 메인이 없습니다 — 맨 위 세션이 오케면 메인', 'This session tree has no main — the top session is main when it is an orchestrator')))
     return [
       cardRow('es-role-hand', L('인계', 'Handover'), <Button key="es-s-handoff" variant="secondary" label={L(`${ROLE_NAME[role]} 인계`, `Hand over (${ROLE_NAME[role].toLowerCase()})`)} onPress={() => acts.handoff()} />, { id: 'role:hand', help: ROLE_HELP }),
@@ -2208,7 +2229,7 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
         <Box columnGap={1} alignItems="center" flexGrow={1} minWidth={0}>
           {titleCell(bareTitle(r.title))}
           <Button key={`es-sendto-b-${el}`} variant="secondary" label={isWriting ? L('닫기', 'Close') : L('보내기', 'Send')} onPress={() => acts.send(at)} />
-          {canGo ? <Button key={`es-sendto-go-${el}`} variant="secondary" label={L('가기', 'Go')} onPress={() => acts.go(r.id)} /> : null}
+          {canGo ? <Button key={`es-sendto-go-${el}`} plain label={L('가기', 'Go')} onPress={() => acts.go(r.id)} /> : null}
         </Box>,
         help,
       ),
@@ -2236,6 +2257,7 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
       ...(main ? [sendLine(main, undefined, true)] : []),
       reportRow(L('보고 꼴로', 'Report form')),
       sentRow('es-msg-sent', v.sent.filter(s => s.to === up.id)),
+      ...((v.upHeld ?? 0) > 0 ? [cardRow('es-msg-upheld', L('모아 둠', 'Held'), subText(L(`내 보고 ${v.upHeld}개 — 위 세션이 아직 안 받았습니다`, `${plural(v.upHeld ?? 0, 'report')} of mine not taken yet by the session above`), 'warning'))] : []),
       ...heldCards('es-msg-held', heldUp),
     ]
   }
@@ -2283,7 +2305,7 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
             </Box>
           ) : null}
           <Button key={`es-open-b-${el}`} variant="secondary" label={isWriting ? L('닫기', 'Close') : L('보내기', 'Send')} onPress={() => acts.send(at)} />
-          {r.canGo ? <Button key={`es-open-go-${el}`} variant="secondary" label={L('가기', 'Go')} onPress={() => acts.go(r.id)} /> : null}
+          {r.canGo ? <Button key={`es-open-go-${el}`} plain label={L('가기', 'Go')} onPress={() => acts.go(r.id)} /> : null}
         </Box>,
       ),
       isWriting ? sending(`o${el}`, r.id, r.title, true) : null,
@@ -2318,7 +2340,12 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
     const fixLine = canFix ? L('손질은 줄마다 ⋯ 이나 「손질」 줄에서 합니다(오케 세션에서만).', 'Manage with ⋯ on each row or on the Manage row (orchestrator sessions only).') : L('하위 세션 손질은 메인 · 오케만 — 오케로 바꾸면 손질이 생깁니다.', 'Only main and orchestrator sessions manage the sessions below — make this an orchestrator to get those tools.')
     const recvHelp: RowHelp = { id: 'rep:recv', help: { tip: L('받는 법 바꾸기는 [설정] 「자식 보고」', 'Change how reports come in Settings → Child reports'), lines: [L('받는 법 바꾸기는 [설정] 「자식 보고」.', 'Change how reports come in Settings → Child reports.'), fixLine] } }
     const out: unknown[][] = []
-    if (pu.pre) out.push([preCard(pu.pre)])
+    // 그 줄이 「나머지」에 접혀 안 그려지면 칸 맨 위(0.1.31 자리)
+    const pre = pu.pre
+    const drawnKids = kids.length <= LIST_LIMIT || folds.has('kids') ? kids : kids.slice(0, LIST_LIMIT)
+    const preAtTidy = pre?.act === 'tidy' && canFix && ended.length > 0
+    const preAtRow = pre !== null && pre !== undefined && pre.act !== 'tidy' && drawnKids.some(r => r.id === pre.ids[0])
+    if (pre && !preAtTidy && !preAtRow) out.push([preCard(pre)])
     const modeLine = kidModes(kids)
     const canAuto = canFix && kids.some(r => !r.isEnded && !r.isArchived && r.mode === 'bypassPermissions')
     if (modeLine !== null)
@@ -2344,7 +2371,7 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
       ])
       out.push(cardRow('es-rep-recv', L('받는 법', 'Receive'), <Text>{v.settings.reports.value === 'app' ? L('앱 그대로', "The app's way") : L('모아 둠', 'Held in the panel')}</Text>, recvHelp))
     }
-    if (canFix && ended.length > 0) out.push([tidyBox(ended)])
+    if (canFix && ended.length > 0) out.push([tidyBox(ended), preAtTidy && pre ? preCard(pre) : null])
     if (canFix) {
       out.push([
         ...cardRow(
@@ -3670,6 +3697,23 @@ function textPressBox(ui: Ui, key: string, o: PressOpts) {
   )
 }
 
+const TIP_BG = 'userMessageBackgroundHover'
+const TIP_OFF = 'tip-off'
+let tipPre = ''
+const tipScope = (key: string) => `${tipPre}${key}`.slice(0, 64)
+const tipHost = (key: string, hover: { backgroundColor?: string } = {}) => ({ backgroundColor: '#0000', ...hover, scope: tipScope(key) })
+type TipAt = { top: number; left?: number; right?: number }
+function tipChip(ui: Ui, key: string, text: string, at: TipAt) {
+  const { Box, Text } = ui
+  return (
+    <Box position="absolute" {...at} display="none" hover={{ display: 'flex', scope: tipScope(key) }}>
+      <Text wrap="truncate-end" backgroundColor={TIP_BG} hover={{ scope: TIP_OFF, backgroundColor: TIP_BG }}>{` ${text} `}</Text>
+    </Box>
+  )
+}
+const sideAt = (w: number, onLeft = false): TipAt => (onLeft ? { top: 0, right: Math.ceil(w) + 1 } : { top: 0, left: Math.ceil(w) + 1 })
+const coverW = (n: number) => n * 1.18 + 1.56
+
 // 덮개 폭을 셀 수 있는 칸(칩 · ? · 보기)은 keyed Box 한 겹(입력창 위 iconButton 꼴 — 덮개는 내림으로 칸 안에), 줄 남은 폭을 채우는 칸(grow — 요약 줄 ·
 // 세션 관리 머리)만 안쪽 Box 가 넘침을 자른다(덮개가 옆 단추를 덮지 않게). 마우스 올림 줄은 바깥 keyed Box 몫(안쪽에서 자르면 같이 잘린다). 그리기 크기 — 0.1.5 재기
 function pressBox(ui: Ui, key: string, o: PressOpts) {
@@ -3681,14 +3725,11 @@ function pressBox(ui: Ui, key: string, o: PressOpts) {
     </Box>
   )
   // 마우스 올림 줄은 칸 위(top -1) — absolute 는 앞에 그린 것 위에만 그려져(엔진 타입) 아래에 띄우면 다음 줄 · 칸에 가려진다(selfCmds 절 6.2.1판 까닭)
-  const tip = o.tip ? (
-    <Box position="absolute" top={o.tipDown ? 1 : -1} {...(o.tipRight ? { right: 0 } : { left: 0 })} display="none" hover={{ display: 'flex' }} backgroundColor="userMessageBackground" paddingX={1}>
-      <Text wrap="truncate-end">{o.tip}</Text>
-    </Box>
-  ) : null
+  const tip = o.tip ? tipChip(ui, key, o.tip, o.tipDown ? sideAt(coverW(o.cover), o.tipRight) : { top: -1, ...(o.tipRight ? { right: 0 } : { left: 0 }) }) : null
+  const host = o.tip ? { hover: tipHost(key, o.box?.hover) } : {}
   if (!o.grow) {
     return (
-      <Box key={`${key}-box`} columnGap={0.5} alignItems="center" flexShrink={0} {...o.box}>
+      <Box key={`${key}-box`} columnGap={0.5} alignItems="center" flexShrink={0} {...o.box} {...host}>
         {o.content}
         {cover}
         {tip}
@@ -3696,7 +3737,7 @@ function pressBox(ui: Ui, key: string, o: PressOpts) {
     )
   }
   return (
-    <Box key={`${key}-box`} flexGrow={1} flexShrink={1} minWidth={0}>
+    <Box key={`${key}-box`} flexGrow={1} flexShrink={1} minWidth={0} {...host}>
       <Box columnGap={0.5} alignItems="center" overflow="hidden" flexGrow={1} minWidth={0} {...o.box}>
         {o.content}
         {cover}
@@ -3727,16 +3768,14 @@ function iconButton(ui: Ui, key: string, icon: QuickIcon, name: string, onPress:
     )
   }
   return (
-    <Box key={key} borderStyle="single" borderColor="promptBorder" paddingX={0.5} paddingY={0.4} marginLeft={ROW_LEAD} hover={{ backgroundColor: 'promptBorderShimmer' }}>
+    <Box key={key} borderStyle="single" borderColor="promptBorder" paddingX={0.5} paddingY={0.4} marginLeft={ROW_LEAD} hover={tipHost(key, { backgroundColor: 'promptBorderShimmer' })}>
       <Svg source={quickIconSvg(icon, { ...ROW_LOOK, ...look })} alt={name} width={QUICK_ROW_PX} height={QUICK_ROW_PX} />
       {isStill ? null : (
         <Box position="absolute" top={0} left={0} right={0} bottom={0} alignItems="stretch">
           <Button key={`${key}-p`} label={COVER.repeat(ICON_COVER)} plain dimColor onPress={onPress} />
         </Box>
       )}
-      <Box position="absolute" top={1} left={0} display="none" hover={{ display: 'flex' }} backgroundColor="userMessageBackground" paddingX={1}>
-        <Text wrap="truncate-end">{name}</Text>
-      </Box>
+      {tipChip(ui, key, name, sideAt(coverW(ICON_COVER)))}
     </Box>
   )
 }
@@ -3759,7 +3798,7 @@ function paneButton(ui: Ui, isShown: boolean, onPress: () => void | Promise<void
     )
   }
   return (
-    <Box key="es-q-panel" borderStyle="single" borderColor="subtle" columnGap={0.5} alignItems="center" paddingX={0.5} paddingY={0.4} hover={{ backgroundColor: 'promptBorderShimmer' }}>
+    <Box key="es-q-panel" borderStyle="single" borderColor="subtle" columnGap={0.5} alignItems="center" paddingX={0.5} paddingY={0.4} hover={tipHost('es-q-panel', { backgroundColor: 'promptBorderShimmer' })}>
       <Svg source={quickIconSvg(isShown ? 'panelOpen' : 'panel', { hex: 'currentColor', px: QUICK_ROW_PX })} alt={name} width={QUICK_ROW_PX} height={QUICK_ROW_PX} />
       <Text>{PANE_LABEL()}</Text>
       {isStill ? null : (
@@ -3767,9 +3806,7 @@ function paneButton(ui: Ui, isShown: boolean, onPress: () => void | Promise<void
           <Button key="es-q-panel-p" label={COVER.repeat(PANE_COVER())} plain dimColor onPress={onPress} />
         </Box>
       )}
-      <Box position="absolute" top={1} left={0} display="none" hover={{ display: 'flex' }} backgroundColor="userMessageBackground" paddingX={1}>
-        <Text wrap="truncate-end">{name}</Text>
-      </Box>
+      {tipChip(ui, 'es-q-panel', name, sideAt(coverW(PANE_COVER())))}
     </Box>
   )
 }
@@ -3857,7 +3894,7 @@ function advisorFigure(ui: Ui, key: string, m: AdvisorMark) {
   const Svg = (ui as unknown as { Svg?: CharSvgEl }).Svg
   if (!Svg) return null
   return (
-    <Box key={key} alignItems="center" flexShrink={0}>
+    <Box key={key} alignItems="center" flexShrink={0} hover={tipHost(key)}>
       <Svg
         source={advisorCharSvg(QUICK_ROW_PX, m.pose, m.isMoving)}
         alt={m.tip}
@@ -3865,9 +3902,7 @@ function advisorFigure(ui: Ui, key: string, m: AdvisorMark) {
         height={QUICK_ROW_PX}
         {...(m.isMoving ? { isInteractive: true as const } : {})}
       />
-      <Box position="absolute" top={1} left={0} display="none" hover={{ display: 'flex' }} backgroundColor="userMessageBackground" paddingX={1}>
-        <Text wrap="truncate-end">{m.tip}</Text>
-      </Box>
+      {tipChip(ui, key, m.tip, sideAt(advisorCharWidth(QUICK_ROW_PX, m.pose) / 8.5))}
     </Box>
   )
 }
@@ -3878,11 +3913,9 @@ export const advisorCountText = (m: Pick<AdvisorMark, 'count' | 'usd'>) => `${L(
 function advisorCount(ui: Ui, key: string, m: AdvisorMark) {
   const { Box, Text } = ui
   return (
-    <Box key={key} alignItems="center" flexShrink={0}>
+    <Box key={key} alignItems="center" flexShrink={0} hover={tipHost(key)}>
       <Text color="subtle">{advisorCountText(m)}</Text>
-      <Box position="absolute" top={1} left={0} display="none" hover={{ display: 'flex' }} backgroundColor="userMessageBackground" paddingX={1}>
-        <Text wrap="truncate-end">{m.tip}</Text>
-      </Box>
+      {tipChip(ui, key, m.tip, sideAt(textCh(advisorCountText(m))))}
     </Box>
   )
 }
@@ -3909,15 +3942,13 @@ function lockedPick(ui: Ui, key: string, label: string, value: string, isWarn = 
   )
 }
 
-/** 마우스를 올리면 아래에 한 줄 설명(입력창 위 줄 · 왼쪽부터 놓인 것) */
-function withTip(ui: Ui, key: string, child: unknown, tip: string) {
-  const { Box, Text } = ui
+/** 마우스를 올리면 한 줄 설명 — 패널은 칸 위(at 없음), 입력창 위 바는 같은 줄 옆(at). 노트 panel.md#tipChip */
+function withTip(ui: Ui, key: string, child: unknown, tip: string, at: TipAt = { top: -1, left: 0 }) {
+  const { Box } = ui
   return (
-    <Box key={key}>
+    <Box key={key} hover={tipHost(key)}>
       {child}
-      <Box position="absolute" top={1} left={0} display="none" hover={{ display: 'flex' }} backgroundColor="userMessageBackground" paddingX={1}>
-        <Text wrap="truncate-end">{tip}</Text>
-      </Box>
+      {tipChip(ui, key, tip, at)}
     </Box>
   )
 }
@@ -3941,16 +3972,14 @@ function sendCell(ui: Ui, s: SendActs) {
   const { Box, Text, Select } = ui
   return (
     <Box key="es-q-send-row" columnGap={0.5} alignItems="center" flexShrink={0} marginLeft={ROW_LEAD}>
-      <Box key="es-q-send-box" columnGap={0.5} flexShrink={0} alignItems="center" borderStyle="single" borderColor={s.state === 'on' ? 'suggestion' : s.state === 'bad' ? 'warning' : 'rgba(0,0,0,0)'} paddingX={0.5} paddingY={0.1}>
+      <Box key="es-q-send-box" columnGap={0.5} flexShrink={0} alignItems="center" borderStyle="single" borderColor={s.state === 'on' ? 'suggestion' : s.state === 'bad' ? 'warning' : 'rgba(0,0,0,0)'} paddingX={0.5} paddingY={0.1} hover={tipHost('es-q-send-box')}>
         <Box key="es-q-send-cap" flexShrink={0}>
           <Text color="subtle">{SEND_LABEL()}</Text>
         </Box>
         <Box key="es-q-send-val" width={SEND_VALUE_W} flexShrink={0} alignItems="center">
           <Select key="es-q-send" value={s.value} options={s.options} onSelect={v => s.pick(v)} />
         </Box>
-        <Box position="absolute" top={1} right={0} display="none" hover={{ display: 'flex' }} backgroundColor="userMessageBackground" paddingX={1}>
-          <Text wrap="truncate-end">{s.tip}</Text>
-        </Box>
+        {tipChip(ui, 'es-q-send-box', s.tip, sideAt(textCh(SEND_LABEL()) + SEND_VALUE_W + 2, true))}
       </Box>
       <Box key="es-q-send-slot" width={SEND_SLOT_W} alignItems="center" flexShrink={0}>
         {s.canText === true
@@ -3994,7 +4023,8 @@ export function drawQuickRow(ui: Ui, q: QuickView, acts: QuickActs, look: PanelL
   // 미리보기엔 덮개 단추가 없다 — 누를 것이 없고, 띠 크기에 맞춘 덮개가 패널 글꼴에선 칩보다 넓다(그림 도구로 잼)
   const isStill = acts.isPreview === true
   const lockTip = (what: string) => (acts.isPreview ? L(`미리보기 — 아래 「${what}」에서 바꿉니다`, `Preview — change it in ${what} below`) : LOCKED_TIP())
-  return (
+  tipPre = acts.isPreview ? 'pv-' : ''
+  const row = (
     <Box key="es-quick" columnGap={ROW_LEAD} rowGap={0.5} alignItems="center" flexWrap="wrap">
       {/* 노트: panel.md#textUi — 글 화면은 줄 앞에 흐린 「이지 세션」(시안 터미널 그림 — 띠에 mod 이름이 안 붙는 자리) */}
       {look.isText ? (
@@ -4020,7 +4050,8 @@ export function drawQuickRow(ui: Ui, q: QuickView, acts: QuickActs, look: PanelL
             ui,
             'es-q-advisor-box',
             isLocked ? lockedPick(ui, 'es-q-advisor-lock', 'advisor', acts.advisor.value, acts.advisor.value === 'fable') : advisor,
-            isLocked ? lockTip('advisor') : L('모든 세션에 걸리는 설정입니다', 'A setting for every session'),
+            isLocked ? lockTip('advisor') : L('세션마다 따로 걸립니다 · 기본값은 입력칸에 /advisor 를 쳐서', 'Set per session · for the default, type /advisor'),
+            sideAt(textCh(`advisor ${acts.advisor.value}`) + 4),
           )}
           {mk && mk.count > 0 ? advisorCount(ui, 'es-q-adv-count', mk) : null}
         </Box>
@@ -4028,15 +4059,13 @@ export function drawQuickRow(ui: Ui, q: QuickView, acts: QuickActs, look: PanelL
       {has('display') || acts.send ? <Box key="es-q-gap" flexGrow={1} /> : null}
       {acts.send ? (acts.isPreview ? lockedPick(ui, 'es-q-send-lock', SEND_LABEL(), acts.send.options.find(o => o.value === acts.send?.value)?.label.trim() ?? L('없음', 'None')) : sendCell(ui, acts.send)) : null}
       {has('display') ? (
-        <Box key="es-display-box" marginLeft={ROW_LEAD}>
+        <Box key="es-display-box" marginLeft={ROW_LEAD} hover={tipHost('es-display-box')}>
           {isLocked ? (
             lockedPick(ui, 'es-display-lock', L('화면', 'Screen'), acts.display.options.find(o => o.value === acts.display.value)?.label ?? acts.display.value)
           ) : (
             <Select key="es-display" label={L('화면', 'Screen')} value={acts.display.value} options={acts.display.options} onSelect={v => acts.display.pick(v)} />
           )}
-          <Box position="absolute" top={1} right={0} display="none" hover={{ display: 'flex' }} backgroundColor="userMessageBackground" paddingX={1}>
-            <Text wrap="truncate-end">{isLocked ? lockTip(L('화면', 'Screen')) : L('모든 세션의 Claude 답을 고른 기기에 맞춥니다', "Fits Claude's answers in every session to the device you pick")}</Text>
-          </Box>
+          {tipChip(ui, 'es-display-box', isLocked ? lockTip(L('화면', 'Screen')) : L('모든 세션의 Claude 답을 고른 기기에 맞춥니다', "Fits Claude's answers in every session to the device you pick"), sideAt(textCh(`${L('화면', 'Screen')} ${acts.display.value}`) + 4, true))}
         </Box>
       ) : null}
       {/* 노트: panel.md#noteLine — VS Code 알림 대신 한 줄(0.1.28 결정 9): 패널이 닫혔으면 줄 끝에 */}
@@ -4049,6 +4078,8 @@ export function drawQuickRow(ui: Ui, q: QuickView, acts: QuickActs, look: PanelL
       ) : null}
     </Box>
   )
+  tipPre = ''
+  return row
 }
 
 // advisor · 화면 · 전달 고르기 · 글만 보내기)를 빈 동작으로 — 미리보기에서 눌러도 아무 일도 안 한다(시험 panel.test 「미리보기」)
@@ -4073,8 +4104,8 @@ export function previewOf(a: QuickActs): QuickActs {
 const FABLE_TITLE = () => L('advisor 를 fable 로 켤까요?', 'Turn the advisor to fable?')
 const FABLE_LEAD = () =>
   L(
-    '모든 세션의 기본값이 fable 로 바뀝니다. advisor 가 이미 켜진 대화는 /clear · /compact 전까지 지금 모델 그대로입니다. 불릴 때마다 Fable 5.2 가 돌아 같은 양이면 ',
-    'This changes the default for every session to fable. Conversations that already have the advisor on keep their current model until /clear or /compact. Each call runs Fable 5.2, so for the same amount it ',
+    '이 세션 advisor 가 fable 로 바뀝니다. 이 대화에 /clear · /compact 전까지 안 걸리면 바꾸지 않고 그대로 둡니다. 불릴 때마다 Fable 5.2 가 돌아 같은 양이면 ',
+    "This session's advisor changes to fable. If it can't apply to this conversation until /clear or /compact, nothing changes. Each call runs Fable 5.2, so for the same amount it ",
   )
 const FABLE_COST: Record<PlanKind | 'unknown', string> = {
   get sub() {

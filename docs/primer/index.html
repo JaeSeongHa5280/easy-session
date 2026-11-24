@@ -429,7 +429,7 @@ code, .mono { font-family: var(--mono); }
 </head>
 <body>
 <header class="top">
-  <div class="lang">English · <a href="ko.html">한국어</a></div>
+  <div class="lang">English · <a href="primer.ko.html">한국어</a></div>
   <h1>easy-session</h1>
   <p class="sub">Click through the line above the input and the session panel · 0.1.31</p>
   <p class="lead">easy-session lets you turn Claude Code features like the advisor and ultrathink on and off right from the line above the input, and shows when the advisor was called, what Claude did around it, and what it cost. Reports from sessions you opened wait until you choose to take them, instead of waking your session. As sessions add up, it keeps them in order with roles like main and orchestrator, and a session tree.</p>
@@ -674,7 +674,7 @@ code, .mono { font-family: var(--mono); }
     ultraTip: '더 깊이 추론하게 함 · 입력창 맨 앞에 넣음 · 다시 누르면 뺌',
     advisor: 'advisor',
     advisors: ['off', 'sonnet', 'opus', 'fable'],
-    advSelTip: '모든 세션에 걸리는 설정입니다',
+    advSelTip: '세션마다 따로 걸립니다 · 기본값은 입력칸에 /advisor 를 쳐서',
     advCount: (n, usd) => `${n}번${usd !== null ? ` · $${usd.toFixed(2)}` : ''}`,
     advTipOn: used => `advisor 켜짐 · ${used}`,
     advTipOff: '이 세션 메인 모델이 더 세서 메인엔 안 걸림 · 하위 에이전트는 부를 수 있음',
@@ -689,12 +689,12 @@ code, .mono { font-family: var(--mono); }
     textOnlyNone: '보낼 글이 없습니다',
     lockedTip: '답이 끝난 뒤 바꿀 수 있습니다',
     fableTitle: 'advisor 를 fable 로 켤까요?',
-    fableLead: '모든 세션의 기본값이 fable 로 바뀝니다. advisor 가 이미 켜진 대화는 /clear · /compact 전까지 지금 모델 그대로입니다. 불릴 때마다 Fable 5.2 가 돌아 같은 양이면 구독은 5시간 사용량을 Opus 5.5 보다 많이 쓰고, API 요금으로 쓰면 요금이 2배 듭니다.',
+    fableLead: '이 세션 advisor 가 fable 로 바뀝니다. 이 대화에 /clear · /compact 전까지 안 걸리면 바꾸지 않고 그대로 둡니다. 불릴 때마다 Fable 5.2 가 돌아 같은 양이면 구독은 5시간 사용량을 Opus 5.5 보다 많이 쓰고, API 요금으로 쓰면 요금이 2배 듭니다.',
     fableOn: '켜기',
-    toastAdvOff: 'advisor 를 껐습니다',
-    toastAdvSet: name => `advisor 를 ${name} 로 바꿨습니다`,
-    toastAdvKeeps: name => `이 대화는 /clear · /compact 전까지 ${name} 그대로`,
-    toastAdvNotMain: '이 세션 메인 모델엔 안 걸림 · 하위 에이전트만',
+    toastAdvOff: '이 세션 advisor 를 껐습니다',
+    toastAdvSet: name => `이 세션 advisor 를 ${name} 로 바꿨습니다`,
+    toastAdvKeeps: name => `이 대화는 /clear · /compact 전까지 ${name} 그대로라 안 바꿨습니다`,
+    toastAdvNotMain: '메인 모델보다 약해 안 걸림',
     toastPickLater: '답이 끝난 뒤 다시 고르세요',
     ultraSpin: 'ultrathink · ',
 
@@ -923,7 +923,7 @@ code, .mono { font-family: var(--mono); }
     ultraTip: 'Asks for deeper reasoning · goes at the start of the prompt · press again to take it out',
     advisor: 'advisor',
     advisors: ['off', 'sonnet', 'opus', 'fable'],
-    advSelTip: 'A setting for every session',
+    advSelTip: 'Set per session · for the default, type /advisor',
     advCount: (n, usd) => `${n}×${usd !== null ? ` · $${usd.toFixed(2)}` : ''}`,
     advTipOn: used => `Advisor on · ${used}`,
     advTipOff: "This session's main model is stronger, so it doesn't apply to the main · subagents can call it",
@@ -938,12 +938,12 @@ code, .mono { font-family: var(--mono); }
     textOnlyNone: 'Nothing to send',
     lockedTip: 'You can change it once the answer ends',
     fableTitle: 'Turn the advisor to fable?',
-    fableLead: 'This changes the default for every session to fable. Conversations that already have the advisor on keep their current model until /clear or /compact. Each call runs Fable 5.2, so for the same amount it uses more 5-hour usage than Opus 5.5 on a subscription, and costs twice as much at API rates.',
+    fableLead: "This session's advisor changes to fable. If it can't apply to this conversation until /clear or /compact, nothing changes. Each call runs Fable 5.2, so for the same amount it uses more 5-hour usage than Opus 5.5 on a subscription, and costs twice as much at API rates.",
     fableOn: 'Turn on',
-    toastAdvOff: 'Turned the advisor off',
-    toastAdvSet: name => `Set the advisor to ${name}`,
-    toastAdvKeeps: name => `this conversation keeps ${name} until /clear or /compact`,
-    toastAdvNotMain: "not on this session's main model · subagents only",
+    toastAdvOff: "Turned this session's advisor off",
+    toastAdvSet: name => `Set this session's advisor to ${name}`,
+    toastAdvKeeps: name => `This conversation keeps ${name} until /clear or /compact, so nothing changed`,
+    toastAdvNotMain: "less capable than the main model, so it won't apply",
     toastPickLater: 'Pick again once the answer ends',
     ultraSpin: 'ultrathink · ',
 
@@ -2066,12 +2066,12 @@ code, .mono { font-family: var(--mono); }
   }
   function setAdvisor(st, v, prev) {
     const s = Sx(st)
+    const main = st.ss[st.self].model
+    if (prev !== 'off' && v !== 'off' && prev !== v && applies(prev, main)) return toast(st, s.toastAdvKeeps(ALIAS[prev]))
     st.advisor = v
     st.advTurn = false
-    const main = st.ss[st.self].model
     if (v === 'off') return toast(st, s.toastAdvOff, true)
     const notes = []
-    if (prev !== 'off' && prev !== v && applies(prev, main)) notes.push(s.toastAdvKeeps(ALIAS[prev]))
     if (!applies(v, main)) notes.push(s.toastAdvNotMain)
     toast(st, [s.toastAdvSet(ALIAS[v]), ...notes].join(' · '), true)
   }
