@@ -47,11 +47,15 @@ export function advisorToast(text: string): string {
   return [said, ...notes].join(' · ')
 }
 
-/** 이 대화엔 /clear · /compact 전까지 안 걸려 앞 값으로 되돌린 뒤의 알림 — isBack = 되돌리기도 엔진이 받음, value = 고른 값 */
+/**
+ * 이 대화엔 /clear · /compact 전까지 안 걸려 앞 값으로 되돌린 뒤의 알림 — isBack = 되돌리기도 엔진이 받음, value = 고른 값.
+ * 글은 「안 바꿨다」가 아니라 「바꿀 수 없다 · 언제 되는지」
+ */
 export function advisorKeptToast(text: string, isBack: boolean, value: string): string {
-  if (!isBack) return L(`이 대화엔 /clear · /compact 전까지 안 걸리는데 되돌리지 못해 ${value} ${josa(value, '으로', '로')} 바뀐 채 남았습니다`, `It won't apply to this conversation until /clear or /compact, and couldn't be undone — left at ${value}`)
-  const kept = readAdvisorAnswer(text).kept
-  return kept
-    ? L(`이 대화는 /clear · /compact 전까지 ${kept} 그대로라 안 바꿨습니다`, `This conversation keeps ${kept} until /clear or /compact, so nothing changed`)
-    : L('이 대화엔 /clear · /compact 전까지 안 걸려서 안 바꿨습니다', "It won't apply to this conversation until /clear or /compact, so nothing changed")
+  const a = readAdvisorAnswer(text)
+  const m = a.model ?? value
+  if (!isBack) return L(`${m} ${josa(m, '은', '는')} /compact 나 /clear 뒤에 걸립니다 — 되돌리지 못해 칸은 ${value} ${josa(value, '으로', '로')} 남았습니다`, `${m} applies after /compact or /clear — couldn't undo, so it's left at ${value}`)
+  return a.kept
+    ? L(`${m} ${josa(m, '으로', '로')} 바꿀 수 없습니다 — 이 대화는 ${a.kept} ${josa(a.kept, '으로', '로')} 묶여 있어 /compact 나 /clear 뒤에 바꿀 수 있습니다`, `Can't switch to ${m} — this conversation is tied to ${a.kept}; you can switch after /compact or /clear`)
+    : L(`${m} ${josa(m, '으로', '로')} 지금은 바꿀 수 없습니다 — /compact 나 /clear 뒤에 바꿀 수 있습니다`, `Can't switch to ${m} now — you can switch after /compact or /clear`)
 }

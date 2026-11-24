@@ -690,11 +690,11 @@ code, .mono { font-family: var(--mono); }
     textOnlyNone: '보낼 글이 없습니다',
     lockedTip: '답이 끝난 뒤 바꿀 수 있습니다',
     fableTitle: 'advisor 를 fable 로 켤까요?',
-    fableLead: '이 세션 advisor 가 fable 로 바뀝니다. 이 대화에 /clear · /compact 전까지 안 걸리면 바꾸지 않고 그대로 둡니다. 불릴 때마다 Fable 5.2 가 돌아 같은 양이면 구독은 5시간 사용량을 Opus 5.5 보다 많이 쓰고, API 요금으로 쓰면 요금이 2배 듭니다.',
+    fableLead: '이 세션 advisor 가 fable 로 바뀝니다. 이 대화가 다른 모델로 묶여 있으면 지금은 바꿀 수 없고 /compact 나 /clear 뒤에 바꿀 수 있습니다. 불릴 때마다 Fable 5.2 가 돌아 같은 양이면 구독은 5시간 사용량을 Opus 5.5 보다 많이 쓰고, API 요금으로 쓰면 요금이 2배 듭니다.',
     fableOn: '켜기',
     toastAdvOff: '이 세션 advisor 를 껐습니다',
     toastAdvSet: name => `이 세션 advisor 를 ${name} 로 바꿨습니다`,
-    toastAdvKeeps: name => `이 대화는 /clear · /compact 전까지 ${name} 그대로라 안 바꿨습니다`,
+    toastAdvKeeps: (name, kept) => `${name} 로 바꿀 수 없습니다 — 이 대화는 ${kept} 로 묶여 있어 /compact 나 /clear 뒤에 바꿀 수 있습니다`,
     toastAdvNotMain: '메인 모델보다 약해 안 걸림',
     toastPickLater: '답이 끝난 뒤 다시 고르세요',
     ultraSpin: 'ultrathink · ',
@@ -939,11 +939,11 @@ code, .mono { font-family: var(--mono); }
     textOnlyNone: 'Nothing to send',
     lockedTip: 'You can change it once the answer ends',
     fableTitle: 'Turn the advisor to fable?',
-    fableLead: "This session's advisor changes to fable. If it can't apply to this conversation until /clear or /compact, nothing changes. Each call runs Fable 5.2, so for the same amount it uses more 5-hour usage than Opus 5.5 on a subscription, and costs twice as much at API rates.",
+    fableLead: "This session's advisor changes to fable. If this conversation is tied to another model, you can switch only after /compact or /clear. Each call runs Fable 5.2, so for the same amount it uses more 5-hour usage than Opus 5.5 on a subscription, and costs twice as much at API rates.",
     fableOn: 'Turn on',
     toastAdvOff: "Turned this session's advisor off",
     toastAdvSet: name => `Set this session's advisor to ${name}`,
-    toastAdvKeeps: name => `This conversation keeps ${name} until /clear or /compact, so nothing changed`,
+    toastAdvKeeps: (name, kept) => `Can't switch to ${name} — this conversation is tied to ${kept}; you can switch after /compact or /clear`,
     toastAdvNotMain: "less capable than the main model, so it won't apply",
     toastPickLater: 'Pick again once the answer ends',
     ultraSpin: 'ultrathink · ',
@@ -2071,7 +2071,7 @@ code, .mono { font-family: var(--mono); }
   function setAdvisor(st, v, prev) {
     const s = Sx(st)
     const main = st.ss[st.self].model
-    if (prev !== 'off' && v !== 'off' && prev !== v && applies(prev, main)) return toast(st, s.toastAdvKeeps(ALIAS[prev]))
+    if (prev !== 'off' && v !== 'off' && prev !== v && applies(prev, main)) return toast(st, s.toastAdvKeeps(ALIAS[v], ALIAS[prev]))
     st.advisor = v
     st.advTurn = false
     if (v === 'off') return toast(st, s.toastAdvOff, true)

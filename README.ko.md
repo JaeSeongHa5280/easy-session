@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.1.32-4c9be8" alt="버전 0.1.32">
+  <img src="https://img.shields.io/badge/version-0.1.33-4c9be8" alt="버전 0.1.33">
   <img src="https://img.shields.io/badge/Claude_Code-plugin-D97757" alt="Claude Code 플러그인">
   <img src="https://img.shields.io/badge/tested_on-Claude_Code_2.1.330-4c9be8" alt="Claude Code 2.1.330 에서 시험">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT 라이선스">
@@ -15,7 +15,7 @@
 <p align="center">
   <a href="README.md">English</a> · <b>한국어</b>
   &nbsp;|&nbsp;
-  <a href="#필요한-것">필요한 것</a> · <a href="#설치">설치</a> · <a href="#업데이트-받기">업데이트 받기</a> · <a href="#0132-에서-바뀐-것">바뀐 것</a> · <a href="#왜-필요한가">왜 필요한가</a> · <a href="#기능">기능</a> · <a href="#알아-둘-것">알아 둘 것</a> · <a href="#문제가-생기면--제보">제보</a>
+  <a href="#필요한-것">필요한 것</a> · <a href="#설치">설치</a> · <a href="#업데이트-받기">업데이트 받기</a> · <a href="#0133-에서-바뀐-것">바뀐 것</a> · <a href="#왜-필요한가">왜 필요한가</a> · <a href="#기능">기능</a> · <a href="#알아-둘-것">알아 둘 것</a> · <a href="#문제가-생기면--제보">제보</a>
 </p>
 
 <p align="center">
@@ -114,14 +114,11 @@ claude plugin uninstall easy-session@easy-session
 
 </details>
 
-## 0.1.32 에서 바뀐 것
+## 0.1.33 에서 바뀐 것
 
-- **누를 것 덜어 내기** — 패널 줄마다 회색 단추는 그 줄의 주 동작 하나만, 나머지는 글 단추입니다. 하위 세션 줄의 손질은 [메시지] · [마무리] 두 줄, 받은 글은 둘째 줄 [받은 글 N ›]에서 폅니다.
-- **묻는 카드는 누른 줄 밑** — 보관 · 끝내기 전 남은 메시지 카드가 누른 줄 바로 밑에 「끝내기 전에 — <제목>」으로 뜹니다. 위 세션 칸엔 내 보고가 위에서 아직 안 받힌 수(「모아 둠」)가 보입니다.
-- **맨 위 단독이 하위를 열면 [메인으로]** — 「지금」 줄 물음이 「메인 세션으로 바꿀까요?」입니다.
-- **advisor 는 세션마다** — Claude Code 2.1.330 부터 이지 세션이 바꾼 advisor 는 그 세션에만 걸립니다. 기본값은 입력칸에 `/advisor <모델>` 을 직접 치면 바뀝니다. 이 대화에 안 걸리는 바꾸기는 되돌리고 알립니다.
-- **패널 첫 그림이 가벼워짐** — 보관 세션 기록은 그린 뒤 읽습니다.
-- **고침** — 마우스 올림 설명이 겹쳐 뜨고 안 사라지던 것, advisor 알림이 깨지던 것.
+- **advisor 를 바꿀 수 없을 때 알림을 분명하게** — 이 대화가 다른 advisor 모델로 묶여 있으면 「Opus 5.5 로 바꿀 수 없습니다 — 이 대화는 Fable 5.2 로 묶여 있어 /compact 나 /clear 뒤에 바꿀 수 있습니다」처럼 무엇이 안 되고 언제 되는지 알립니다.
+
+앞 버전에서 바뀐 것은 [변경 기록](CHANGELOG.ko.md)에 있습니다.
 
 ## 왜 필요한가
 

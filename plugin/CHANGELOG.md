@@ -4,6 +4,11 @@ All notable changes to easy-session. Versions follow [Semantic Versioning](https
 
 **Update:** send Claude `Update this plugin: easy-session (claude plugin marketplace update easy-session, then claude plugin update easy-session@easy-session)`, or run those two lines in a shell, then restart Claude — see [Update](README.md#update).
 
+## [0.1.33] — 2026-11-24
+
+### Changed
+- **A clearer note when the advisor can't be switched** — when this conversation is tied to another advisor model, the note now reads "Can't switch to Opus 5.5 — this conversation is tied to Fable 5.2; you can switch after /compact or /clear". In 0.1.32 it read "This conversation keeps Fable 5.2 until /clear or /compact, so nothing changed", as if easy-session had chosen not to switch. The card that asks before fable now says the same.
+
 ## [0.1.32] — 2026-11-24
 
 ### Changed

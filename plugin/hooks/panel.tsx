@@ -4104,8 +4104,8 @@ export function previewOf(a: QuickActs): QuickActs {
 const FABLE_TITLE = () => L('advisor 를 fable 로 켤까요?', 'Turn the advisor to fable?')
 const FABLE_LEAD = () =>
   L(
-    '이 세션 advisor 가 fable 로 바뀝니다. 이 대화에 /clear · /compact 전까지 안 걸리면 바꾸지 않고 그대로 둡니다. 불릴 때마다 Fable 5.2 가 돌아 같은 양이면 ',
-    "This session's advisor changes to fable. If it can't apply to this conversation until /clear or /compact, nothing changes. Each call runs Fable 5.2, so for the same amount it ",
+    '이 세션 advisor 가 fable 로 바뀝니다. 이 대화가 다른 모델로 묶여 있으면 지금은 바꿀 수 없고 /compact 나 /clear 뒤에 바꿀 수 있습니다. 불릴 때마다 Fable 5.2 가 돌아 같은 양이면 ',
+    "This session's advisor changes to fable. If this conversation is tied to another model, you can switch only after /compact or /clear. Each call runs Fable 5.2, so for the same amount it ",
   )
 const FABLE_COST: Record<PlanKind | 'unknown', string> = {
   get sub() {

@@ -4,6 +4,11 @@ easy-session 의 버전마다 바뀐 것입니다. 버전 번호는 [유의적 �
 
 **업데이트 받기:** Claude 에게 `이 플러그인 업데이트해줘: easy-session (claude plugin marketplace update easy-session 후 claude plugin update easy-session@easy-session)` 를 보내거나 셸에서 그 두 줄을 친 뒤 Claude 를 다시 켜세요 — [업데이트 받기](README.ko.md#업데이트-받기) 참고.
 
+## [0.1.33] — 2026-11-24
+
+### 바뀜
+- **advisor 를 바꿀 수 없을 때 알림** — 이 대화가 다른 advisor 모델로 묶여 있어 바꾸지 못하면 「Opus 5.5 로 바꿀 수 없습니다 — 이 대화는 Fable 5.2 로 묶여 있어 /compact 나 /clear 뒤에 바꿀 수 있습니다」라고 알립니다. 0.1.32 의 「이 대화는 /clear · /compact 전까지 Fable 5.2 그대로라 안 바꿨습니다」는 이지 세션이 일부러 안 바꾼 것처럼 읽혔습니다. fable 을 고를 때 묻는 카드 글도 같은 말로 바꿨습니다.
+
 ## [0.1.32] — 2026-11-24
 
 ### 바뀜

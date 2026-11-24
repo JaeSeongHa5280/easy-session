@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.1.32-4c9be8" alt="Version 0.1.32">
+  <img src="https://img.shields.io/badge/version-0.1.33-4c9be8" alt="Version 0.1.33">
   <img src="https://img.shields.io/badge/Claude_Code-plugin-D97757" alt="Claude Code plugin">
   <img src="https://img.shields.io/badge/tested_on-Claude_Code_2.1.330-4c9be8" alt="Tested on Claude Code 2.1.330">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT license">
@@ -15,7 +15,7 @@
 <p align="center">
   <b>English</b> · <a href="README.ko.md">한국어</a>
   &nbsp;|&nbsp;
-  <a href="#requirements">Requirements</a> · <a href="#install">Install</a> · <a href="#update">Update</a> · <a href="#whats-new-in-0132">What's new</a> · <a href="#why-easy-session">Why</a> · <a href="#features">Features</a> · <a href="#good-to-know">Good to know</a> · <a href="#something-wrong--report-it">Report a problem</a>
+  <a href="#requirements">Requirements</a> · <a href="#install">Install</a> · <a href="#update">Update</a> · <a href="#whats-new-in-0133">What's new</a> · <a href="#why-easy-session">Why</a> · <a href="#features">Features</a> · <a href="#good-to-know">Good to know</a> · <a href="#something-wrong--report-it">Report a problem</a>
 </p>
 
 <p align="center">
@@ -114,14 +114,11 @@ No cloning into `~/.claude` and no `settings.json` edits are involved.
 
 </details>
 
-## What's new in 0.1.32
+## What's new in 0.1.33
 
-- **Fewer buttons to press** — each panel row keeps one gray button for its main action; the rest are text buttons. A Below row's actions are on two lines, **Messages** and **Wrap up**, and its received messages open from **N received ›** on the second line.
-- **The asking card opens under the row you pressed** — the leftover-messages card before Archive or End shows right under that row as "Before you end — <title>". The Above tile shows how many of your reports the session above hasn't taken yet (*Held*).
-- **Make main** — when a solo session at the top opens sessions below, **Now** asks "make this the main session?".
-- **The advisor is per session** — from Claude Code 2.1.330, the advisor easy-session changes applies to that session only; type `/advisor <model>` in the input yourself to change the default. A change that can't apply to this conversation is set back, with a note.
-- **A lighter first draw of the panel** — archived sessions' records are read after it draws.
-- **Fixed** — hover tips that piled up and stayed, and a garbled advisor note.
+- **A clearer note when the advisor can't be switched** — when this conversation is tied to another advisor model, the note says what can't be done and when it can, like "Can't switch to Opus 5.5 — this conversation is tied to Fable 5.2; you can switch after /compact or /clear".
+
+Changes in earlier versions are in the [changelog](CHANGELOG.md).
 
 ## Why easy-session
 
