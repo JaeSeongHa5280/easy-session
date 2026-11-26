@@ -7,7 +7,7 @@ import type { EngineInterface } from 'claude-code'
 import type { AdvisorCall, ChangeGroup, CleanScan, EndedKid, Family, FamilyRow, HeldReport, MatchAsk, OpenRow, PanelUi, PlanKind, PreAsk, SentRow, SentState, SessionMeta, UpdateState } from '../types'
 import { advisorCharSvg, advisorCharWidth } from './advisor-char'
 import type { AdvisorPose } from './advisor-char'
-import { agoText, heldKey, modeName, stampText, statusText, topicMark, whenText, withIra } from './meta'
+import { SEND_KINDS, TALK_MAX, agoText, heldKey, kindName, modeName, stampText, statusText, topicMark, whenText, withIra } from './meta'
 import type { SessionRole } from './meta'
 import { L, lang, plural } from './i18n'
 import { fitCells, textCh } from './tree'
@@ -226,6 +226,8 @@ export type PanelActs = {
   draft: (text: string) => void
   sendGo: (id: string, text: string) => void
   sendCancel: () => void
+  /** 보낼 글 칸의 갈래 고르기(0.1.34 L1) — note · ask · talk */
+  sendKind: (value: string) => void
   cardOpen: (id: string) => void
   cardSend: (id: string) => void
   cardCancel: () => void
@@ -957,6 +959,8 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
             <Box key={`${key}-s${i}`} columnGap={1} flexShrink={0}>
               {/* 노트: panel.md#preCard — 받는 곳이 보관됐으면 「받는 곳 보관됨」(0.1.31 ⑧) */}
               {v.metas.get(s.to)?.isArchived ? tagBox(`${key}-a${i}`, L('받는 곳 보관됨', 'Receiver archived'), 'warn') : null}
+              {/* 노트: panel.md#sendKind — 갈래 표지(기록과 맞을 때만). 주고받기는 사용자 말 없이 보낸 수 / 한도 */}
+              {s.kind ? tagBox(`${key}-k${i}`, s.kind === 'talk' && s.talks ? `${kindName(s.kind)} ${s.talks}/${TALK_MAX}` : kindName(s.kind)) : null}
               <Text color={s.state === 'replied' ? 'success' : s.state === 'undelivered' ? 'error' : 'inactive'}>{SENT_TEXT[s.state]}</Text>
               <Text color="subtle">{agoText(s.sentAt, v.now)}</Text>
             </Box>
@@ -964,6 +968,20 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
         ))
       )}
     </Box>
+  )
+
+  const KIND_SAYS: Record<string, string> = {
+    note: L('보내고 끝', 'send and done'),
+    ask: L('답을 한 번 받음', 'one reply back'),
+    talk: L(`${TALK_MAX}번까지 오감`, `up to ${TALK_MAX} rounds`),
+  }
+  const kindPick = (el: string) => (
+    <Select
+      key={`es-sendkind-${el}`}
+      value={pu.sendKind ?? 'note'}
+      options={SEND_KINDS.map(k => ({ value: k, label: `${kindName(k)} — ${KIND_SAYS[k]}` }))}
+      onSelect={(x: string) => acts.sendKind(x)}
+    />
   )
 
   // el = 그리는 key 꼬리(줄이면 짧은 id, 「메시지 보내기」 칸 줄이면 c + 짧은 id), id = 받는 세션. isBare = 글 칸만(줄 단추가 닫기를 맡고 보내기는 글 칸 단추 — 노트 panel.md#compose)
@@ -980,10 +998,15 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
           onSubmit={(t: string) => acts.sendGo(id, t)}
         />
       ) : null}
-      {isBare ? null : (
-        <Box key={`es-sendbtns-${el}`} columnGap={1} justifyContent="flex-end">
-          <Button key={`es-sendgo-${el}`} variant="primary" label={L('보내기', 'Send')} onPress={() => acts.sendGo(id, pu.draft)} />
-          <Button key={`es-sendno-${el}`} plain dimColor label={L('취소', 'Cancel')} onPress={() => acts.sendCancel()} />
+      {isBare ? (
+        <Box key={`es-sendkind-row-${el}`}>{kindPick(el)}</Box>
+      ) : (
+        <Box key={`es-sendbtns-${el}`} columnGap={1} rowGap={0.4} flexWrap="wrap" justifyContent="space-between" alignItems="center">
+          {kindPick(el)}
+          <Box key={`es-sendbtns-r-${el}`} columnGap={1}>
+            <Button key={`es-sendgo-${el}`} variant="primary" label={L('보내기', 'Send')} onPress={() => acts.sendGo(id, pu.draft)} />
+            <Button key={`es-sendno-${el}`} plain dimColor label={L('취소', 'Cancel')} onPress={() => acts.sendCancel()} />
+          </Box>
         </Box>
       )}
     </Box>

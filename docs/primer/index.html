@@ -340,7 +340,10 @@ code, .mono { font-family: var(--mono); }
 .no .nl2 { flex: none; color: var(--mute); }
 .sendbox2 { margin: 6px 0 4px 20px; }
 .ta2 { width: 100%; box-sizing: border-box; resize: none; background: #1c1c1a; color: var(--ink); border: 1px solid var(--line2); border-radius: 8px; padding: 6px 8px; font: 12.5px/1.45 var(--font); }
-.sb2 { display: flex; gap: 6px; justify-content: flex-end; margin-top: 5px; }
+.sb2 { display: flex; gap: 5px 6px; justify-content: flex-start; align-items: center; flex-wrap: wrap; margin-top: 5px; }
+.sb2r { display: flex; gap: 6px; margin-left: auto; }
+.kindbox { position: relative; display: inline-flex; }
+.kindbox .menu { min-width: 190px; }
 .wake { margin: 6px 0 4px 0; border: 1px solid var(--line2); border-radius: 12px; padding: 7px 10px; background: #222220; }
 .wake .wh { display: flex; align-items: center; gap: 6px; }
 .wake .wsub { color: var(--mute); font-size: 11.5px; margin: 2px 0 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -787,6 +790,8 @@ code, .mono { font-family: var(--mono); }
     kidUnend: '끝남 풀기',
     draftPh: short => `「${short}」에 보낼 글`,
     cancel: '취소',
+    kinds: { note: '알림', ask: '답 받기', talk: '주고받기' },
+    kindSays: { note: '보내고 끝', ask: '답을 한 번 받음', talk: '3번까지 오감' },
     snowTip: '캐시 식음',
     wakeTitle: '컴팩트하고 보내면 더 쌉니다',
     wakeAs: '그대로 보내면',
@@ -1036,6 +1041,8 @@ code, .mono { font-family: var(--mono); }
     kidUnend: 'Unmark ended',
     draftPh: short => `Message to “${short}”`,
     cancel: 'Cancel',
+    kinds: { note: 'Notice', ask: 'Reply wanted', talk: 'Back-and-forth' },
+    kindSays: { note: 'send and done', ask: 'one reply back', talk: 'up to 3 rounds' },
     snowTip: 'Cold',
     wakeTitle: 'Compacting first is cheaper',
     wakeAs: 'Send now',
@@ -1766,6 +1773,7 @@ code, .mono { font-family: var(--mono); }
       under: {},
       sending: null,
       draft: '',
+      kind: 'note',
       card: null,
       reports: 'app',
       held: [],
@@ -2170,11 +2178,13 @@ code, .mono { font-family: var(--mono); }
         toast(st, s.toastCard(to.title), true)
         st.sending = null
         st.draft = ''
+        st.kind = 'note'
       } else st.match = { id, confirm: false }
       return
     }
     toast(st, s.toastSentTo(to.title), true)
     st.sending = null
+    st.kind = 'note'
   }
   function kidsAuto(st) {
     const s = Sx(st)
@@ -2325,8 +2335,13 @@ code, .mono { font-family: var(--mono); }
       case 'under':
         st.under[arg] = !st.under[arg]
         break
+      case 'kindPick':
+        st.kind = arg
+        st.menu = null
+        break
       case 'sendTo':
         st.sending = st.sending === arg ? null : arg
+        st.kind = 'note'
         st.draft = st.sending ? (arg === upOf(st, st.self) && draft('up')) || draft('sib') : ''
         st.card = null
         st.match = null
@@ -2353,6 +2368,7 @@ code, .mono { font-family: var(--mono); }
         st.match = null
         st.sending = null
         st.draft = ''
+        st.kind = 'note'
         break
       case 'matchX':
         st.match = null
@@ -2981,7 +2997,10 @@ code, .mono { font-family: var(--mono); }
         const opt = (name, now, next) => `<div class="wo"><span class="wn">${esc(name)}</span><span>${esc(`${now} · ${S.wakeNext(next)}`)}</span></div>`
         return `<div class="wake" data-shot="wake-card"><div class="wh">${icon('snowflake', { px: 15, hex: HEX.gray })}<b>${esc(S.wakeTitle)}</b><span class="sp"></span>${b({ cls: 'btn x', act: 'cardX', shot: 'wake-x', html: '✕' })}</div><div class="wsub">${esc(`${s.title} · ${S.ago(s.agoMin)} · ${k}k · ${s.model}`)}</div>${opt(S.wakeAs, M.money(M.wakeUsd(k)), M.money(M.nextUsd(k)))}${opt(S.wakeCp, M.money(M.compactUsd(k)), M.money(M.AFTER_NEXT))}<div class="wbtn">${b({ cls: 'btn primary', act: 'cardOpen', arg: id, shot: 'wake-open', html: esc(S.wakeOpen) })}${b({ act: 'cardSend', arg: id, shot: 'wake-send', html: esc(S.wakeSend(M.money(M.wakeUsd(k)))) })}</div></div>`
       }
-      return `<div class="sendbox2"><textarea class="ta2" data-draft rows="2" placeholder="${esc(S.draftPh(s.title))}">${esc(st.draft)}</textarea><div class="sb2">${b({ cls: 'btn primary', act: 'sendGo', arg: id, shot: 'draft-send', html: esc(S.sendBtn) })}${b({ cls: 'btn plain', act: 'sendTo', arg: id, shot: 'draft-cancel', html: esc(S.cancel) })}</div></div>`
+      const kindLabel = k => `${S.kinds[k]} — ${S.kindSays[k]}`
+      const kindRows = ['note', 'ask', 'talk'].map(k => ({ value: k, label: kindLabel(k) }))
+      const kindPick = b({ cls: 'pick kind-v', act: 'menu', arg: 'kind', shot: 'kind-open', html: `<span class="sv">${esc(kindLabel(st.kind))}</span><span class="caret">▾</span>` })
+      return `<div class="sendbox2"><textarea class="ta2" data-draft rows="2" placeholder="${esc(S.draftPh(s.title))}">${esc(st.draft)}</textarea><div class="sb2"><div class="kindbox">${kindPick}${menu('kind', kindRows, st.kind, 'kind-opt', 'kindPick')}</div><div class="sb2r">${b({ cls: 'btn primary', act: 'sendGo', arg: id, shot: 'draft-send', html: esc(S.sendBtn) })}${b({ cls: 'btn plain', act: 'sendTo', arg: id, shot: 'draft-cancel', html: esc(S.cancel) })}</div></div></div>`
     }
 
     function settings() {

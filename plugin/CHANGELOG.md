@@ -4,6 +4,13 @@ All notable changes to easy-session. Versions follow [Semantic Versioning](https
 
 **Update:** send Claude `Update this plugin: easy-session (claude plugin marketplace update easy-session, then claude plugin update easy-session@easy-session)`, or run those two lines in a shell, then restart Claude — see [Update](README.md#update).
 
+## [0.1.34] — 2026-11-26
+
+### New
+- **Say whether a message wants an answer** — a message between sessions now starts its first line with one of three kinds: **Notice** (send and done — the default), **Reply wanted** (asks the receiving session to reply once) and **Back-and-forth** (the two sessions go back and forth, up to 3 sends without you). Until 0.1.33 a message had no kind, so Claude would wait for an answer even to a message that only meant to tell. In the panel, pick the kind under the send box; it goes back to Notice after each send. What easy-session sends or asks Claude to send for you with a send signal or ➤ starts with [Notice], and the hint for sending up tells Claude to add a kind.
+- **Claude's sends need a kind** — with session rules on, in a desktop app session, a `SendMessage` or `send_message` by Claude is refused with what to do when its first line has no kind, when a Notice also asks to be told when the receiver goes idle (`notify_when_idle`), or when it would be the fourth Back-and-forth to one session before you write again.
+- **The receiving side is told the kind** — Claude in the session that gets the message has one line for it: for a Notice, don't reply to the sender unless you ask; for Reply wanted, reply once with [Notice]. Sent messages show their kind, and a Back-and-forth shows the count, like *Back-and-forth 2/3*.
+
 ## [0.1.33] — 2026-11-24
 
 ### Changed

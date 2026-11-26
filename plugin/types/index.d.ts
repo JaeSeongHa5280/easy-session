@@ -109,8 +109,14 @@ export type Receipt = {
 
 export type SentState = 'sent' | 'delivered' | 'read' | 'replied' | 'undelivered'
 
-/** 패널 아래 「보낸 글」 한 줄 */
-export type SentRow = { to: string; title: string; sentAt: number; state: SentState; reason: string | null }
+/** 보내기 갈래(0.1.34 L1) — note 알림(보내고 끝) · ask 답 받기(한 번) · talk 주고받기. 노트 meta.md#sendKind */
+export type SendKind = 'note' | 'ask' | 'talk'
+
+/** 이지 세션이 보낸 글의 갈래 기록 한 줄 — 앱 도착 기록(글 내용 없음)과 받는 곳 · 시각으로 맞춘다. 노트 meta.md#sendKind */
+export type SentKindItem = { to: string; at: number; kind: SendKind }
+
+/** 패널 아래 「보낸 글」 한 줄 — kind = 갈래(기록과 맞으면), talks = 주고받기로 사용자 말 없이 오간 수 */
+export type SentRow = { to: string; title: string; sentAt: number; state: SentState; reason: string | null; kind?: SendKind; talks?: number }
 
 /** easy-session 이 적는 끝남 기록 — <자료 폴더>/sessions/<앱 세션 id>.json */
 export type EndRecord = { ended: true; summary: string; by: 'self' | 'user'; at: number }
@@ -272,6 +278,8 @@ export type PanelUi = {
   match?: MatchAsk | null
   /** 0.1.31 8b ⓑ [하위 모두 자동으로] 뒤 트리로만 묶인 권한 무시 하위(이 세션이 연 세션이 아님) — 묻기 카드 하나로 묶어 묻는 중. 없으면 null */
   kidsAsk?: string[] | null
+  /** 0.1.34 L1 보낼 글 칸의 갈래 고르기 — 없으면 알림. 보내거나 닫으면 알림으로 돌아간다 */
+  sendKind?: SendKind
 }
 
 /** 8b ⓐ 고르기 재료 — text = 보낼 글, busy = 받는 곳이 일하는 중(엔진 등록부), isOwnKid = 이 세션이 연 하위(앱 부모), confirm = 남의 세션 내리기 한 번 더 묻는 중. 노트 register.md#modeMatch */

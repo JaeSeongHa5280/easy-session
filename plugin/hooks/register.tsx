@@ -6,7 +6,7 @@
 import { atom, read, update } from 'claude-code'
 import type { CommandInfo, EngineInterface, FsEntry, Register } from 'claude-code'
 
-import type { AdvisorCall, AdvisorShare, AdvisorUse, BoardFile, ChangeGroup, CleanScan, EndRecord, EndedKid, LowerJob, MatchAsk, OpenRow, OutItem, RegistryEntry, RelayFound, RelayMark, RelayPending, HeldBox, HeldReport, NavNode, PanelUi, PlanKind, PreAsk, SessionMeta, StoredPlan, TreeLinks, UpdateState } from '../types'
+import type { AdvisorCall, AdvisorShare, AdvisorUse, BoardFile, ChangeGroup, CleanScan, EndRecord, EndedKid, LowerJob, MatchAsk, OpenRow, OutItem, RegistryEntry, RelayFound, RelayMark, RelayPending, HeldBox, HeldReport, NavNode, PanelUi, PlanKind, PreAsk, SendKind, SessionMeta, StoredPlan, TreeLinks, UpdateState } from '../types'
 import type { AdvisorPose } from './advisor-char'
 import { ADVISORS, advisorAlias, advisorKeptToast, advisorToast, readAdvisorAnswer } from './advisor-say'
 import {
@@ -135,6 +135,16 @@ import {
   modeName,
   topicMark,
   withIra,
+  attachKinds,
+  judgeKind,
+  parseSentKinds,
+  parseTalks,
+  peerKindLine,
+  pushSentKind,
+  kindIn,
+  stripKind,
+  withKind,
+  kindOfText,
 } from './meta'
 import type { AppFolder, LeftMsgs, PinWhy, SentItem, SessionRole } from './meta'
 import { ADV_FOLD, AUTO_SWITCH, COMPOSE_AT, DESKTOP_LOOK, MD_LOCK_SWITCH, MENTION_SWITCH, MGR_SWITCH, PEER_SWITCH, QUICK_ITEMS, RULES_SWITCH, QUICK_SWITCH, SEND_MAIN, SEND_MISS, SEND_NONE, TOOL_START, bareTitle, compactWins, drawFableAsk, drawPanel, drawPanelBare, drawQuickRow, josa, sendPad, shortTitle } from './panel'
@@ -1204,7 +1214,7 @@ async function relayTextOnly($: EngineInterface): Promise<void> {
   if ('miss' in found) return toast($, L(`보내지 않습니다 — ${relayMissText(sig.word, found)}`, `Not sent — ${relayMissText(sig.word, found)}`))
   const name = relayName(s.metas, found.id)
   // 입력창 글 그대로(붙여 넣은 글도 — 신호 · ultrathink 낱말만 뺀다)
-  const text = `${RELAY_TEXT_HEAD()}\n\n${withSignal(draft, null).replace(/^\s*ultrathink\s+/i, '').trim()}`
+  const text = withKind(`${RELAY_TEXT_HEAD()}\n\n${withSignal(draft, null).replace(/^\s*ultrathink\s+/i, '').trim()}`, 'note')
   if (s.metas.get(s.selfId)?.mode === 'bypassPermissions') {
     const at = await $.clock.now()
     const sent = await $.session.send({ to: found.id, text }).catch((err: unknown) => ({ isDelivered: false as const, reason: String(err) }))
@@ -1722,7 +1732,11 @@ async function loadPanelView($: EngineInterface, pu: PanelUi, surface?: string):
     mainRow,
     opened,
     ending: await refreshEnding($).catch((): Set<string> => new Set()),
-    sent: sentLog ? sentRowsOf(sentLog, SENT_ROWS) : recentSent(selfMeta, tree, SENT_ROWS),
+    sent: attachKinds(
+      sentLog ? sentRowsOf(sentLog, SENT_ROWS) : recentSent(selfMeta, tree, SENT_ROWS),
+      parseSentKinds(await $.store.get(`${SENT_KIND_PREFIX}${s.selfId}`).catch(() => undefined)),
+      await readTalks($, s.selfId),
+    ),
     sentN,
     recv,
     ctxPct: typeof tokens === 'number' && typeof window === 'number' && window > 0 ? Math.round((tokens / window) * 100) : null,
@@ -1865,8 +1879,8 @@ async function engineSendAct($: EngineInterface, id: string, text: string): Prom
   if (appId && (target === null || target.entrypoint === DESKTOP_ENTRY)) return false
   const title = app.files.get(id)?.meta?.title ?? target?.name ?? id
   const addr = target?.socket ? `uds:${target.socket}` : id
-  const askText = bothAsk(() => L(`「${title}」(\`${addr}\`)에 SendMessage 로 보내 주세요:\n\n${text}`, `Send this to 「${title}」(\`${addr}\`) with SendMessage:\n\n${text}`))
-  const clear = () => update($, panelUi, u => ({ ...u, sending: null, card: null, draft: '', match: null, kidsAsk: null }))
+  const askText = bothAsk(() => L(`「${title}」(\`${addr}\`)에 SendMessage 로 보내 주세요:\n\n${kindIn(text, 0)}`, `Send this to 「${title}」(\`${addr}\`) with SendMessage:\n\n${kindIn(text, 1)}`))
+  const clear = () => update($, panelUi, u => ({ ...u, sending: null, card: null, draft: '', match: null, kidsAsk: null, sendKind: 'note' as const }))
   if (appId && !(await isBypass($))) {
     if ((await ask($, askText)) === 'filled') await clear()
     return true
@@ -2285,7 +2299,8 @@ async function modeMatch($: EngineInterface, selfId: string, to: string, metas: 
   return matchDenyText(way, { title: target.title, to, fromMode: self.mode, toMode: target.mode, busy })
 }
 
-async function guardSend($: EngineInterface, raw: unknown, kind: 'send' | 'mcp', message?: unknown): Promise<string | null> {
+async function guardSend($: EngineInterface, raw: unknown, kind: 'send' | 'mcp', message?: unknown, notify?: unknown): Promise<string | null> {
+  kindPending = null
   // 스위치는 못 읽으면 던진다 — .catch 가 막는다(열려 버리면 규칙이 없는 것과 같다)
   if ((await $.store.get(SESSION_RULES_KEY)) === 'off') return null
   if (typeof raw !== 'string') return null
@@ -2314,8 +2329,19 @@ async function guardSend($: EngineInterface, raw: unknown, kind: 'send' | 'mcp',
     deny = r.deny
     return r.next
   })
-  if (deny === null && place.id !== null && isGone) return modeMatch($, selfId, place.id, metas, entries, message)
-  return deny
+  if (deny === null && place.id !== null && isGone) {
+    const held = await modeMatch($, selfId, place.id, metas, entries, message)
+    if (held !== null) return held
+  }
+  if (deny !== null) return deny
+  return kindCheck($, selfId, place.id ?? place.key, message, notify)
+}
+
+async function afterKind<R extends { deny?: unknown; isError?: boolean }>($: EngineInterface, r: R): Promise<R> {
+  const p = kindPending
+  kindPending = null
+  if (p && r.deny === undefined && !r.isError) await recordKind($, p.selfId, p.to, p.kind).catch(err => log($, `갈래 기록 실패 — ${String(err)}`))
+  return r
 }
 
 function guardCatch($: EngineInterface, e: unknown, next: { called: boolean; error: { message?: string } } & ((x: never) => unknown)) {
@@ -2332,6 +2358,7 @@ async function noteTurnOrigin($: EngineInterface, e: { turnId?: string; origin?:
   const allow = [...filledSendTargets(text), ...(isHuman ? more : [])]
   if (isHuman) {
     const selfId = await selfAppId($)
+    if (selfId) await $.store.delete(`${TALK_PREFIX}${selfId}`)
     const p = selfId ? await readPending($, selfId) : null
     if (p && (p.turnId === null || p.turnId === (e.turnId ?? null))) allow.push(p.to)
   }
@@ -2986,7 +3013,7 @@ async function matchStart($: EngineInterface, selfId: string, id: string, text: 
   if (self.parent === id && !reportStateOf(id, metas, await reportSwitches($), await reportDefault($)).on) return matchCardAct($, id, text)
   const busy = isBusy(await readRegistry($).catch((): RegistryEntry[] => []), id)
   const m: MatchAsk = { id, text, fromMode: self.mode ?? '', toMode: target.mode ?? '', busy, isOwnKid: target.parent === selfId, confirm: false }
-  await update($, panelUi, u => ({ ...u, card: null, draft: text, match: m }))
+  await update($, panelUi, u => ({ ...u, card: null, draft: stripKind(text), match: m }))
 }
 
 /** 받는 곳(앱 id)이 지금 일하는 중 — 엔진 세션 등록부 status(busy · idle, 11-23 잼) */
@@ -3074,7 +3101,7 @@ async function lowerAndSend($: EngineInterface, id: string, text: string | null,
       await directSend($, id, text)
       return 'done'
     }
-    const filled = await ask($, askAbout(id, s.selfId, n => `${n.name}에 SendMessage 로 보내 주세요:\n\n${text}`, n => `Send this to ${n.name} with SendMessage:\n\n${text}`), `${lowered} · `)
+    const filled = await ask($, askAbout(id, s.selfId, n => `${n.name}에 SendMessage 로 보내 주세요:\n\n${kindIn(text, 0)}`, n => `Send this to ${n.name} with SendMessage:\n\n${kindIn(text, 1)}`), `${lowered} · `)
     if (filled === 'failed') await cardInstead($, s.selfId, id, text)
     return 'done'
   }
@@ -3085,8 +3112,8 @@ async function lowerAndSend($: EngineInterface, id: string, text: string | null,
     askAbout(
       id,
       s.selfId,
-      n => (text === null ? `${lower(n)}.` : `${lower(n)}. 그다음 ${n.name}에 SendMessage 로 보내 주세요:\n\n${text}`),
-      n => (text === null ? `Lower ${n.name} to Auto (auto) with set_session_permission_mode.` : `Lower ${n.name} to Auto (auto) with set_session_permission_mode. Then send this to ${n.name} with SendMessage:\n\n${text}`),
+      n => (text === null ? `${lower(n)}.` : `${lower(n)}. 그다음 ${n.name}에 SendMessage 로 보내 주세요:\n\n${kindIn(text, 0)}`),
+      n => (text === null ? `Lower ${n.name} to Auto (auto) with set_session_permission_mode.` : `Lower ${n.name} to Auto (auto) with set_session_permission_mode. Then send this to ${n.name} with SendMessage:\n\n${kindIn(text, 1)}`),
     ),
   )
   // 입력칸에 못 넣었으면(패널 · 대기는 이미 비움) 글은 그 세션 패널 카드로 — 사라지지 않게(advisor 11-23)
@@ -3441,12 +3468,37 @@ async function mgrSwitch($: EngineInterface, element: string): Promise<{ on: boo
   return { on: false, disabled: false }
 }
 
+const SENT_KIND_PREFIX = 'kinds:'
+const TALK_PREFIX = 'talk:'
+let kindPending: { selfId: string; to: string; kind: SendKind } | null = null
+
+async function recordKind($: EngineInterface, selfId: string, to: string, kind: SendKind): Promise<void> {
+  const key = `${SENT_KIND_PREFIX}${selfId}`
+  const items = parseSentKinds(await $.store.get(key).catch(() => undefined))
+  await $.store.set(key, pushSentKind(items, { to, at: await $.clock.now(), kind }))
+}
+
+async function readTalks($: EngineInterface, selfId: string): Promise<Record<string, number>> {
+  return parseTalks(await $.store.get(`${TALK_PREFIX}${selfId}`).catch(() => undefined))
+}
+
+async function kindCheck($: EngineInterface, selfId: string, to: string, message: unknown, notify: unknown): Promise<string | null> {
+  const talks = await readTalks($, selfId)
+  const r = judgeKind({ message, notify, talks: talks[to] ?? 0 })
+  if (r.deny !== null || r.kind === null) return r.deny
+  if (r.kind === 'talk') await $.store.set(`${TALK_PREFIX}${selfId}`, { ...talks, [to]: (talks[to] ?? 0) + 1 })
+  kindPending = { selfId, to, kind: r.kind }
+  return null
+}
+
 /** 보내기 — bypass 면 앱 세션 채널로 바로(보관된 세션은 풀고 — 정본 11절 ★9), 아니면 SendMessage 지시 글 */
 async function sendAct($: EngineInterface, id: string, text: string): Promise<void> {
+  text = withKind(text, (await read($, panelUi)).sendKind ?? 'note')
+  const kind = kindOfText(text) ?? 'note'
   if (await engineSendAct($, id, text)) return
   const selfId = await selfAppId($)
   const meta = (await refreshApp($)).get(id)
-  const clear = () => update($, panelUi, u => ({ ...u, sending: null, card: null, draft: '', match: null, kidsAsk: null }))
+  const clear = () => update($, panelUi, u => ({ ...u, sending: null, card: null, draft: '', match: null, kidsAsk: null, sendKind: 'note' as const }))
   // 묻는 쪽 → 권한 무시(지시 글 맨 앞 줄이던 칸)는 0.1.31 8b 부터 막히는 칸이라 아래 고르기로 간다
   const selfMeta = (await refreshApp($)).get(selfId ?? '')
   const hold = holdRisk(selfMeta?.mode, meta?.mode)
@@ -3455,8 +3507,8 @@ async function sendAct($: EngineInterface, id: string, text: string): Promise<vo
     const forms = askAbout(
       id,
       selfId,
-      n => (meta?.isArchived ? `${n.name}의 보관을 풀고 SendMessage 로 보내 주세요:\n\n${text}` : `${n.name}에 SendMessage 로 보내 주세요:\n\n${text}`),
-      n => (meta?.isArchived ? `Unarchive ${n.name}, then send this to it with SendMessage:\n\n${text}` : `Send this to ${n.name} with SendMessage:\n\n${text}`),
+      n => (meta?.isArchived ? `${n.name}의 보관을 풀고 SendMessage 로 보내 주세요:\n\n${kindIn(text, 0)}` : `${n.name}에 SendMessage 로 보내 주세요:\n\n${kindIn(text, 0)}`),
+      n => (meta?.isArchived ? `Unarchive ${n.name}, then send this to it with SendMessage:\n\n${kindIn(text, 1)}` : `Send this to ${n.name} with SendMessage:\n\n${kindIn(text, 1)}`),
     )
     if ((await ask($, forms)) === 'filled') await clear()
     return
@@ -3473,6 +3525,7 @@ async function sendAct($: EngineInterface, id: string, text: string): Promise<vo
     toast($, L(`보내지 못했습니다 — ${firstLine(sent.reason)}`, `Couldn't send — ${firstLine(sent.reason)}`))
     return
   }
+  if (selfId) await recordKind($, selfId, id, kind).catch(err => log($, `갈래 기록 실패 — ${String(err)}`))
   toast($, L(`「${shortTitle(meta?.title ?? id)}」에 보냈습니다${hold ? ` — ${holdLine()}` : ''}`, `Sent to “${shortTitle(meta?.title ?? id)}”${hold ? ` — ${holdLine()}` : ''}`), true)
   await clear()
   await redraw($)
@@ -4131,10 +4184,11 @@ function panelActs($: EngineInterface): PanelActs {
       await update($, panelUi, u => ({ ...u, open: isOpening ? id : null, remote: null }))
       if (isOpening) await checkRemote($, id)
     },
-    send: at => set(u => ({ ...u, sending: u.sending === at ? null : at, card: null, match: null, kidsAsk: null })),
+    send: at => set(u => ({ ...u, sending: u.sending === at ? null : at, card: null, match: null, kidsAsk: null, sendKind: 'note' })),
     draft: text => set(u => ({ ...u, draft: text })),
     sendGo: (id, text) => void sendGo($, id, text),
-    sendCancel: () => set(u => ({ ...u, sending: null, card: null, match: null, kidsAsk: null })),
+    sendCancel: () => set(u => ({ ...u, sending: null, card: null, match: null, kidsAsk: null, sendKind: 'note' })),
+    sendKind: value => set(u => ({ ...u, sendKind: value === 'ask' || value === 'talk' ? value : 'note' })),
     cardOpen: id => {
       set(u => ({ ...u, card: null }))
       void goApp($, id)
@@ -4768,7 +4822,8 @@ export const register: Register = on => {
     if (!e.command && (kind === 'peer' || kind === 'peer-send-message')) await noteRecv($, text, e.origin).catch(err => log($, `받은 글 세기 실패 — ${String(err)}`))
     const mention = !e.command && (kind === 'composer' || kind === 'bridge') ? await mentionSubmit($, text).catch(err => (log($, `세션 정보 줄 실패 — ${String(err)}`), null)) : null
     const line = displayLine(await displayOf($))
-    const added = [relayLine, ...(rules?.lines ?? []), peerRel, mention, line].filter((x): x is string => x !== null)
+    const kindLine = !e.command && (kind === 'peer' || kind === 'peer-send-message') ? peerKindLine(text) : null
+    const added = [relayLine, ...(rules?.lines ?? []), peerRel, kindLine, mention, line].filter((x): x is string => x !== null)
     return next(added.length === 0 ? { ...e, text } : { ...e, text, context: [...(e.context ?? []), ...added] })
   })
 
@@ -4786,14 +4841,16 @@ export const register: Register = on => {
   on('tool.call', { tool: 'SendMessage' }, async ($, e, next) => {
     if (e.agentId !== undefined || isOwnCall(next)) return next(e)
     await ensureLang($).catch(() => {})
-    const deny = await guardSend($, (e as unknown as { to?: unknown }).to, 'send', (e as unknown as { message?: unknown }).message)
-    return deny === null ? next(e) : { deny }
+    const deny = await guardSend($, (e as unknown as { to?: unknown }).to, 'send', (e as unknown as { message?: unknown }).message, (e as unknown as { notify_when_idle?: unknown }).notify_when_idle)
+    if (deny !== null) return { deny }
+    return afterKind($, await next(e))
   }).catch(($, e, next) => guardCatch($, e, next as never) as never)
   on('tool.call', { tool: 'mcp__ccd_session_mgmt__send_message' }, async ($, e, next) => {
     if (e.agentId !== undefined || isOwnCall(next)) return next(e)
     await ensureLang($).catch(() => {})
     const deny = await guardSend($, (e as unknown as { session_id?: unknown }).session_id, 'mcp', (e as unknown as { message?: unknown }).message)
-    return deny === null ? next(e) : { deny }
+    if (deny !== null) return { deny }
+    return afterKind($, await next(e))
   }).catch(($, e, next) => guardCatch($, e, next as never) as never)
   on('tool.call', { tool: 'mcp__visualize__show_widget' }, async ($, e, next) => {
     await ensureLang($).catch(() => {})

@@ -1,4 +1,4 @@
-import type { AdvisorCall, AdvisorShare, BoardFile, ContextInfo, DraftSignal, EndRecord, Family, FamilyRow, HeldBox, HeldReport, HeldSeen, OpenRow, OutItem, OutsideEntry, PeerRel, PeerSender, QueuedNote, Receipt, RegistryEntry, RelayFound, RelayMark, RelayPending, RelayWay, ReportState, RulesTurn, SendPlace, SentRow, SentState, SessionMeta, TreeLinks } from '../types'
+import type { AdvisorCall, AdvisorShare, BoardFile, ContextInfo, DraftSignal, EndRecord, Family, FamilyRow, HeldBox, HeldReport, HeldSeen, OpenRow, OutItem, OutsideEntry, PeerRel, PeerSender, QueuedNote, Receipt, RegistryEntry, RelayFound, RelayMark, RelayPending, RelayWay, ReportState, RulesTurn, SendKind, SendPlace, SentKindItem, SentRow, SentState, SessionMeta, TreeLinks } from '../types'
 import { L } from './i18n'
 
 export const INDEX_FILE = 'archived-sessions.idx'
@@ -1304,7 +1304,7 @@ export function relayText(o: { word: string; own: string; answer: string }): str
   const cut = body.length > RELAY_MAX ? `${body.slice(0, RELAY_MAX)}\n\n${L(`(뒤 ${body.length - RELAY_MAX}자 잘림 — 전문은 보낸 세션 기록에 있습니다)`, `(last ${body.length - RELAY_MAX} characters cut — the full text is in the sending session's transcript)`)}` : body
   const said = o.own.length > RELAY_SAID_MAX ? `${o.own.slice(0, RELAY_SAID_MAX)}…` : o.own
   return [
-    L(`사용자가 입력창 신호(\`>>${o.word}\`)로 이 세션의 끝 답을 보냈습니다.`, `The user sent this session's last answer with the prompt signal (\`>>${o.word}\`).`),
+    `${kindTag('note')} ${L(`사용자가 입력창 신호(\`>>${o.word}\`)로 이 세션의 끝 답을 보냈습니다.`, `The user sent this session's last answer with the prompt signal (\`>>${o.word}\`).`)}`,
     ...(said ? [L(`사용자 말: ${said}`, `User's words: ${said}`)] : []),
     '',
     cut,
@@ -1320,8 +1320,8 @@ export function relayContext(o: { word: string; title: string; to: string; way: 
   const bare = `${o.isBare ? L(' 사용자 글이 신호뿐이니 지금까지 한 일의 결론을 정리해 쓰세요.', " The user's message is only the signal, so write up the conclusion of the work so far.") : ''}${o.hold && o.way !== 'card' ? ` ${holdLine()}.` : ''}`
   if (o.way === 'model') {
     return L(
-      `[easy-session 보내기] 사용자 글의 \`>>${o.word}\` 는 이 세션의 답을 ${who}로 보내라는 사용자 지시입니다. 답을 다 쓴 뒤 마지막 동작으로 SendMessage(to: \`${o.to}\`)에 그 답 전체를 담아 한 번 보내세요. ${body}${bare}`,
-      `[easy-session send] \`>>${o.word}\` in the user's message is the user's instruction to send this session's answer to ${who}. After writing the whole answer, as your last action send that whole answer once with SendMessage(to: \`${o.to}\`). ${body}${bare}`,
+      `[easy-session 보내기] 사용자 글의 \`>>${o.word}\` 는 이 세션의 답을 ${who}로 보내라는 사용자 지시입니다. 답을 다 쓴 뒤 마지막 동작으로 SendMessage(to: \`${o.to}\`)에 그 답 전체를 담아, 첫 줄 맨 앞에 [알림]을 붙여 한 번 보내세요. ${body}${bare}`,
+      `[easy-session send] \`>>${o.word}\` in the user's message is the user's instruction to send this session's answer to ${who}. After writing the whole answer, as your last action send that whole answer once with SendMessage(to: \`${o.to}\`), its first line starting with [Notice]. ${body}${bare}`,
     )
   }
   return L(
@@ -1610,6 +1610,131 @@ export function judgeSend(t: RulesTurn, place: SendPlace, f: SendFacts): { next:
 /** 빈 차례 기록 */
 export const RULES_EMPTY: RulesTurn = { isHuman: false, places: [], asked: [], ok: [], allow: [], cold: [] }
 
+// ── 보내기 갈래(0.1.34 L1 — 사용자 11-26 「셋으로 적어」 · 「안 A」) — 노트 meta.md#sendKind ─────────────────────
+export const SEND_KINDS: readonly SendKind[] = ['note', 'ask', 'talk']
+/** 주고받기 — 사용자 말 없이 한 곳에 보낼 수 있는 수(★ 3) */
+export const TALK_MAX = 3
+/** 갈래 기록과 앱 도착 기록을 같은 보내기로 보는 시각 틈 */
+export const KIND_MATCH_MS = 120_000
+/** 갈래 기록을 남기는 수(최근 것) */
+export const SENT_KIND_KEEP = 30
+const KIND_TAGS: Record<SendKind, readonly [string, string]> = {
+  note: ['[알림]', '[Notice]'],
+  ask: ['[답 받기]', '[Reply wanted]'],
+  talk: ['[주고받기]', '[Back-and-forth]'],
+}
+/** 지금 언어의 꼬리표 — 첫 줄 맨 앞에 붙는 글 */
+export const kindTag = (k: SendKind): string => L(KIND_TAGS[k][0], KIND_TAGS[k][1])
+/** 패널 표지 · 고르기에 쓰는 이름(괄호 없음) */
+export const kindName = (k: SendKind): string => kindTag(k).slice(1, -1)
+
+/** 글 첫 줄(빈 줄 뺌) 맨 앞의 갈래 꼬리표 — 없으면 null */
+export function kindOfText(text: unknown): SendKind | null {
+  if (typeof text !== 'string') return null
+  const first = text.split('\n').find(l => l.trim() !== '')?.trimStart() ?? ''
+  return SEND_KINDS.find(k => KIND_TAGS[k].some(t => first.startsWith(t))) ?? null
+}
+
+/** 패널이 보내는 글에 꼬리표를 붙인다 — 이미 있으면(사람이 직접 씀) 그대로 */
+export function withKind(text: string, kind: SendKind): string {
+  return kindOfText(text) !== null ? text : `${kindTag(kind)} ${text.replace(/^\s+/, '')}`
+}
+
+/** 두 언어 지시 글의 한쪽 꼴 — 꼬리표를 그 언어(0 한국어 · 1 영어)로 바꾼다. 꼬리표가 없으면 그대로. 노트 i18n.md#bothLangs(다른 언어로 넣은 글도 우리 글로 알아보게) */
+export function kindIn(text: string, which: 0 | 1): string {
+  const k = kindOfText(text)
+  return k === null ? text : `${KIND_TAGS[k][which]} ${stripKind(text).replace(/^\s+/, '')}`
+}
+
+/** 보낼 칸에 되돌려 둘 글 — 첫 줄 맨 앞 꼬리표를 뗀다(다시 보낼 때 그때 고른 갈래가 붙게) */
+export function stripKind(text: string): string {
+  const k = kindOfText(text)
+  if (k === null) return text
+  const lead = text.match(/^\s*/)?.[0] ?? ''
+  const rest = text.slice(lead.length)
+  const tag = KIND_TAGS[k].find(t => rest.startsWith(t)) ?? ''
+  return `${lead}${rest.slice(tag.length).replace(/^ /, '')}`
+}
+
+/** Claude 의 보내기 판정 — 꼬리표 없음 · 알림인데 기다림 · 주고받기 한도. talks = 이 곳에 사용자 말 없이 주고받기로 보낸 수 */
+export function judgeKind(o: { message: unknown; notify: unknown; talks: number }): { kind: SendKind | null; deny: string | null } {
+  // 글 없이 쉼 알림만 받는 구독(엔진 — 받는 세션에 아무것도 안 감)은 갈래가 없다 — 통과 ★
+  if (o.notify === true && (typeof o.message !== 'string' || o.message.trim() === '')) return { kind: null, deny: null }
+  const kind = kindOfText(o.message)
+  if (kind === null)
+    return {
+      kind,
+      deny: `${RULE_HEAD}${L(
+        `보내기 갈래 꼬리표가 없어 보내지 않았습니다 — 첫 줄 맨 앞에 [알림] · [답 받기] · [주고받기] 가운데 하나를 붙여 다시 보내세요. 사용자가 답을 받아 오라고 하지 않았으면 [알림](보내고 끝 · 기다리지 않음), 답을 한 번 받아야 하면 [답 받기](받는 세션이 답을 한 번 보냄), 오가며 정해야 하면 [주고받기](사용자 말 없이 ${TALK_MAX}번까지)`,
+        `Not sent: no send-kind tag — start the first line with one of [Notice] · [Reply wanted] · [Back-and-forth] and send again. Unless the user asked you to get a reply, use [Notice] (send and done, no waiting); to get one reply, [Reply wanted] (the receiver replies once); to settle something back and forth, [Back-and-forth] (up to ${TALK_MAX} sends without the user)`,
+      )}`,
+    }
+  if (kind === 'note' && o.notify === true)
+    return {
+      kind,
+      deny: `${RULE_HEAD}${L('[알림]은 답을 기다리지 않습니다 — notify_when_idle 를 빼고 다시 보내세요(답을 받아야 하면 [답 받기])', '[Notice] does not wait for a reply — send again without notify_when_idle (to get a reply, use [Reply wanted])')}`,
+    }
+  if (kind === 'talk' && o.talks >= TALK_MAX)
+    return {
+      kind,
+      deny: `${RULE_HEAD}${L(
+        `이 세션에 사용자 말 없이 [주고받기]로 ${TALK_MAX}번 보냈습니다 — 더 이어 갈지 사용자에게 묻고, 답을 받은 뒤 보내세요`,
+        `You've sent this session ${TALK_MAX} [Back-and-forth] messages without the user — ask the user whether to go on, and send after they answer`,
+      )}`,
+    }
+  return { kind, deny: null }
+}
+
+const PEER_MSG = /<cross-session-message\b[^>]*>\n?([\s\S]*?)<\/cross-session-message>/g
+/** 받은 세션 사이 글의 갈래마다 Claude 에게 붙일 줄(꼬리표가 없으면 null) — 받는 쪽 몫 */
+export function peerKindLine(text: string): string | null {
+  const kinds = new Set<SendKind>()
+  for (const m of text.matchAll(PEER_MSG)) {
+    const k = kindOfText(m[1])
+    if (k !== null) kinds.add(k)
+  }
+  const lines = SEND_KINDS.filter(k => kinds.has(k)).map(k =>
+    k === 'note'
+      ? L('[easy-session] 받은 글이 [알림]입니다 — 보낸 세션에 답장하지 마세요(사용자가 시키면 빼고). 할 일이 있으면 하고 결과는 사용자에게 말하세요.', "[easy-session] The message is a [Notice] — don't reply to the sending session (unless the user asks). If it gives you work, do it and tell the user.")
+      : k === 'ask'
+        ? L('[easy-session] 받은 글이 [답 받기]입니다 — 일을 마치면 보낸 세션에 답을 한 번, 첫 줄을 [알림]으로 보내세요.', '[easy-session] The message is a [Reply wanted] — when done, send the sending session one reply whose first line starts with [Notice].')
+        : L(`[easy-session] 받은 글이 [주고받기]입니다 — 답할 때도 첫 줄을 [주고받기]로(사용자 말 없이 ${TALK_MAX}번까지).`, `[easy-session] The message is a [Back-and-forth] — start your reply's first line with [Back-and-forth] too (up to ${TALK_MAX} sends without the user).`),
+  )
+  return lines.length === 0 ? null : lines.join('\n')
+}
+
+/** 저장 값 → 갈래 기록(꼴이 다른 줄은 뺀다) */
+export function parseSentKinds(raw: unknown): SentKindItem[] {
+  if (!Array.isArray(raw)) return []
+  return raw.filter((x): x is SentKindItem => {
+    const o = x as Partial<SentKindItem> | null
+    return typeof o === 'object' && o !== null && typeof o.to === 'string' && typeof o.at === 'number' && SEND_KINDS.includes(o.kind as SendKind)
+  })
+}
+
+/** 갈래 기록에 한 줄 더함(최근 SENT_KIND_KEEP 개) */
+export const pushSentKind = (items: readonly SentKindItem[], item: SentKindItem): SentKindItem[] => [...items, item].slice(-SENT_KIND_KEEP)
+
+/** 저장 값 → 주고받기 수(곳마다) */
+export function parseTalks(raw: unknown): Record<string, number> {
+  const o = typeof raw === 'object' && raw !== null && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {}
+  return Object.fromEntries(Object.entries(o).filter((e): e is [string, number] => typeof e[1] === 'number' && Number.isFinite(e[1]) && e[1] > 0))
+}
+
+/** 「보낸 글」 줄에 갈래를 붙인다 — 같은 곳 · KIND_MATCH_MS 안에서 가장 가까운 기록. 주고받기는 오간 수도 */
+export function attachKinds(rows: readonly SentRow[], items: readonly SentKindItem[], talks: Readonly<Record<string, number>>): SentRow[] {
+  return rows.map(r => {
+    let best: SentKindItem | null = null
+    for (const it of items) {
+      const gap = Math.abs(it.at - r.sentAt)
+      if (it.to === r.to && gap <= KIND_MATCH_MS && (best === null || gap < Math.abs(best.at - r.sentAt))) best = it
+    }
+    if (best === null) return r
+    const n = talks[r.to]
+    return best.kind === 'talk' && typeof n === 'number' ? { ...r, kind: best.kind, talks: n } : { ...r, kind: best.kind }
+  })
+}
+
 export function filledSendTargets(text: string): string[] {
   const ko = [...text.matchAll(/「[^」\n]*」\(`(local_[\w-]+|uds:[^`\n]+)`\)(?:에|의 보관을 풀고) SendMessage 로 보내 주세요/g)]
   const en = [...text.matchAll(/(?:Send this to|Unarchive) 「[^」\n]*」\(`(local_[\w-]+|uds:[^`\n]+)`\)(?: with SendMessage|, then send this to it with SendMessage)/g)]
@@ -1691,7 +1816,11 @@ export const HINT_OPEN = (): string =>
     '[easy-session] 「열어 달라」가 새 세션을 여는 뜻인지 파일 · 창을 여는 뜻인지 둘로 읽히면 한 번 물으세요. 새 세션이면 이 세션이 start_session 으로 엽니다.',
     '[easy-session] If "open it" could mean opening a new session or opening a file or window, ask once. For a new session, this session opens it with start_session.',
   )
-export const hintUp = (title: string, id: string): string => L(`[easy-session] 위 세션 「${title}」에 SendMessage(to = ${id})로 보내세요.`, `[easy-session] Send it to the session above, 「${title}」, with SendMessage(to = ${id}).`)
+export const hintUp = (title: string, id: string): string =>
+  L(
+    `[easy-session] 위 세션 「${title}」에 SendMessage(to = ${id})로 보내세요 — 첫 줄 맨 앞에 갈래 꼬리표(보통 [알림], 답을 받아야 하면 [답 받기]).`,
+    `[easy-session] Send it to the session above, 「${title}」, with SendMessage(to = ${id}) — start the first line with a send-kind tag ([Notice] usually; [Reply wanted] if you need a reply).`,
+  )
 export const hintUpHeld = (title: string, mode: string): string =>
   L(
     `[easy-session] 위 세션 「${title}」${topicMark(title)} ${withIra(modeName(mode) ?? mode)} 이 세션의 SendMessage 는 앱이 붙잡아 버립니다 — 보낼 글은 이 차례 끝 답에 적으세요(그 세션이 이 세션을 연 세션이면 차례 끝 보고로 갑니다). 아니면 사용자에게 입력창 끝에 >>위 를 붙여 보내면 그 세션 패널에 카드로 남는다고 알리세요.`,
@@ -1732,7 +1861,7 @@ export function voiceHints(text: string, up: { id: string; title: string; heldMo
 
 export const RELAY_TEXT_HEADS = ['이 세션 사용자가 입력창에서 직접 보낸 글입니다', 'Sent directly by the user of this session from the prompt box'] as const
 export function isOurFill(text: string): boolean {
-  return /\(easy-session 「[^」]+」(?: 단추| button)?\)/.test(text) || filledSendTargets(text).length > 0 || RELAY_TEXT_HEADS.some(h => text.startsWith(h))
+  return /\(easy-session 「[^」]+」(?: 단추| button)?\)/.test(text) || filledSendTargets(text).length > 0 || RELAY_TEXT_HEADS.some(h => stripKind(text).startsWith(h))
 }
 
 export function parsePending(v: unknown): RelayPending | null {
