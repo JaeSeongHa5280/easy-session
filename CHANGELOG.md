@@ -4,6 +4,15 @@ All notable changes to easy-session. Versions follow [Semantic Versioning](https
 
 **Update:** send Claude `Update this plugin: easy-session (claude plugin marketplace update easy-session, then claude plugin update easy-session@easy-session)`, or run those two lines in a shell, then restart Claude — see [Update](README.md#update).
 
+## [0.1.35] — 2026-11-27
+
+### Changed
+- **"Not done" and "All" on the Below tile** — rows below that ended or show Done and have nothing to handle (held reports, needs input, looks done) start hidden. Switch with **Not done N** and **All N** at the top of the tile (your choice is kept). Rows with something to handle never fold into "More". Rows keep the order they were opened in.
+- **Accept or reject every held report from below** — when two or more sessions below have held reports, the top of the tile has **Accept everything** and **Reject everything** (asks once before deleting) with the accept estimate. Up to 0.1.34 you opened **⋯** on each row.
+- **⋯ is a gray button, Go moved into ⋯** — every row below shows **⋯** as a gray button. **Go** is on the "Go to" line at the top of the opened **⋯**. The role icon at the start of the row is gone (orchestrators below get an "Orchestrator" tag).
+- **Counts say what they count** — the Below tile's bottom line reads "N held" ("N need input" when a session below waits). The cumulative received count of 0.1.34's "N · in N" is gone. A row's "N received" now reads "N held".
+- **Lighter with many sessions below** — **⋯** on a row shows the three latest held reports, plus a "N more" line. Rows are lighter too. With 16 sessions below, opening **⋯** on a row with many reports used to pass the drawing limit and close; it now opens.
+
 ## [0.1.34] — 2026-11-26
 
 ### New

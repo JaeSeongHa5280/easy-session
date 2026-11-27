@@ -536,6 +536,10 @@ export const UNDER_FOLD = 'under:'
 export const UNDER_ALL_FOLD = 'under-all:'
 // 오케 최악(보낸 세션 열 · 하나씩)에 7.5만 자 선을 넘었다(재기 — 크기 시험). 넘는 것은 「그 밖 N개」
 const MSG_LIMIT = 8
+// 한꺼번에 받기 · 지우기는 칸 맨 위 [모두 수락] · [모두 거절]
+const KID_MSG_LIMIT = 3
+/** 하위 세션 칸 「전체보기」 접힘 열쇠(0.1.35 M2 ①) — 없으면 「완료 말고」. 앞머리 kids 라 크기 안전망이 비우면 가벼운 보기로 돌아간다(register.md#sizeGuard) */
+const KIDS_ALL_FOLD = 'kids-all'
 /** 카드 바탕(0.1.5 — 어두운 테마 흰 5% · 밝은 테마 검정 3% 어림). 맞는 테마 키가 없어 중성 회색 — 노트 panel.md#card */
 const CARD_BG = 'rgba(128,128,128,.08)'
 // 칸 최소 폭 · 하위 줄 제목 칸 최소 폭(시안 140px ≈ 18칸) · 「지금」 줄에 그리는 입력 필요 줄 상한
@@ -855,6 +859,20 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
   const heldUp = held.filter(r => r.from === upId)
   const heldSib = held.filter(r => sibIds.has(r.from))
   const heldOther = held.filter(r => !kidIds.has(r.from) && r.from !== upId && !sibIds.has(r.from))
+  // 할 것(모인 보고 · 입력 필요 · 끝난 듯)이 없는 줄. 도는 중인 줄은 남는다. 줄 차례는 만든 때 순 그대로(서가 「자리는 저절로 안 움직인다」)
+  const heldFrom = new Set(heldKid.map(r => r.from))
+  const kidTodo = (r: FamilyRow) => isWaiting(r) || heldFrom.has(r.id) || (!r.isEnded && !r.isArchived && v.ending?.has(r.id) === true)
+  const kidHidden = new Set(kids.filter(r => isDone(r) && !kidTodo(r)).map(r => r.id))
+  const isKidsAll = folds.has(KIDS_ALL_FOLD)
+  const kidsShown = isKidsAll ? kids : kids.filter(r => !kidHidden.has(r.id))
+  // 할 것 없는 줄 — 붙임 · N일 쉼 — 이 열 자리를 채워 모인 보고 3 줄이 「나머지 1」에 접혔다)
+  const kidRoom = Math.max(0, LIST_LIMIT - kidsShown.filter(kidTodo).length)
+  const kidFirst = (() => {
+    let quiet = 0
+    return kidsShown.filter(r => kidTodo(r) || quiet++ < kidRoom)
+  })()
+  const kidMore = kidsShown.length - kidFirst.length
+  const kidDrawn = kidMore > 0 && !folds.has('kids') ? kidFirst : kidsShown
   // 「다른 세션」 보낸 글 = 위 · 하위 · 형제가 아닌 받는 세션(앱 도착 기록)
   const inqSent = v.sent.filter(s => s.to !== upId && !kidIds.has(s.to) && !sibIds.has(s.to))
 
@@ -919,6 +937,7 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
   )
 
   // 「마무리」 줄([끝내기] 회색 하나 · 보관 글 단추 · 떼어 내기 경고 단추). 단추 key 는 옛 ⋯ 목록 그대로(es-m-<이름>-<짧은 id>). 떼어 내기는 앱이 뗄 수 있는 세션만(canDetach)
+  // 0.1.35 M2 ④: 맨 위 「이동」 줄 [가기](줄에서 옮김 — 회색 단추는 그 자리 주 동작). 손질 두 줄은 메인 · 오케만, 이동 줄은 누구나(⋯ 는 모든 줄에 늘)
   const kidFix = (r: FamilyRow) => {
     const el = k(r.id)
     const item = (name: string, label: string, onPress: () => unknown) => linkButton(`es-m-${name}-${el}`, label, onPress)
@@ -934,12 +953,13 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
     )
     return (
       <Box key={`es-fix-${el}`} flexDirection="column" rowGap={0.3} marginTop={0.3} marginLeft={2.5} minWidth={0}>
-        {fixRow(`es-fix-msg-${el}`, L('메시지', 'Messages'), [item('send', L('보내기', 'Send'), () => acts.send(r.id)), item('clean', L('정리 부탁', 'Ask to clean up'), () => acts.clean(r.id)), item('merge', L('일 합치기', 'Merge work'), () => acts.merge(r.id))])}
-        {fixRow(`es-fix-end-${el}`, L('마무리', 'Wrap up'), [
+        {fixRow(`es-fix-go-${el}`, L('이동', 'Go to'), [<Button key={`es-m-go-${el}`} variant="secondary" label={L('가기', 'Go')} onPress={() => acts.go(r.id)} />])}
+        {canFix ? fixRow(`es-fix-msg-${el}`, L('메시지', 'Messages'), [item('send', L('보내기', 'Send'), () => acts.send(r.id)), item('clean', L('정리 부탁', 'Ask to clean up'), () => acts.clean(r.id)), item('merge', L('일 합치기', 'Merge work'), () => acts.merge(r.id))]) : null}
+        {canFix ? fixRow(`es-fix-end-${el}`, L('마무리', 'Wrap up'), [
           <Button key={`es-m-end-${el}`} variant="secondary" label={r.isEnded ? L('끝남 풀기', 'Unmark ended') : L('끝내기', 'End')} onPress={() => acts.finish(r.id, !r.isEnded)} />,
           item('arch', L('보관', 'Archive'), () => acts.archive(r.id, true)),
           v.canDetach.has(r.id) ? dangerButton(`es-m-detach-${el}`, L('떼어 내기', 'Detach'), () => acts.detach(r.id), L('되돌릴 수 없습니다 — 그 세션 보고가 더는 안 옵니다', "Can't be undone — its reports stop coming")) : null,
-        ])}
+        ]) : null}
       </Box>
     )
   }
@@ -1177,8 +1197,6 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
     const isLive = !r.isEnded && !r.isArchived
     const mine = heldKid.filter(x => x.from === r.id)
     const sentTo = v.sent.filter(s => s.to === r.id)
-    // ⋯ 는 손질(메인 · 오케) 또는 그 세션 모인 보고 · 보낸 글이 있을 때 — 서브도 보고를 낱개로 읽고 거절한다(설치판 할 일 카드 몫)
-    const hasMore = canFix || mine.length > 0 || sentTo.length > 0
     const endAt = endedAt.get(r.id)
     const isEnding = !r.isEnded && !r.isArchived && v.ending?.has(r.id) === true
     const state = r.isEnded
@@ -1197,16 +1215,13 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
     // 앱이 연 세션이 아님 = 떼어 낸 세션(앱 lineageDetached — 이 세션이 열고 뗌) 또는 이지세션 기록으로 붙인 세션
     const notOpened = !v.opened.has(r.id)
     const how = r.isDetached ? L('떼어 냄', 'Detached') : L('붙임', 'Attached')
-    const more = isOpen ? (
-      <Button key={`es-more-${el}`} variant="secondary" label="⋯" onPress={() => acts.more(r.id)} />
-    ) : (
-      <Button key={`es-more-${el}`} plain dimColor label="⋯" onPress={() => acts.more(r.id)} />
-    )
+    // 편 때는 꺾쇠를 붙여 가른다(받은 글 단추와 같은 ˅)
+    const more = <Button key={`es-more-${el}`} variant="secondary" label={isOpen ? `⋯ ${CHEVRON.open}` : '⋯'} onPress={() => acts.more(r.id)} />
     return (
       <Box key={`es-row-${el}`} flexDirection="column" paddingY={0.2} minWidth={0}>
         <Box key={`es-head-${el}`} columnGap={0.5} rowGap={0.3} alignItems="center" flexWrap="wrap" minWidth={0}>
+          {/* 노트: panel.md#kidRow — 0.1.35 M2 ⑥: 줄 머리 역할 그림(SVG 글 줄당 약 480자)을 뺐다 — 오케인 하위만 표지 「오케」 */}
           <Box columnGap={0.5} alignItems="center" flexGrow={100} flexShrink={1} minWidth={Math.min(KID_TITLE_MIN, cols - 4)}>
-            {rowMark(r)}
             {r.isStarred ? pinMark(ui, r.pinWhy) : null}
             <Box flexShrink={1} minWidth={0}>
               <Text wrap="truncate-end" color={isDone(r) ? 'subtle' : undefined}>
@@ -1215,15 +1230,15 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
             </Box>
           </Box>
           <Box columnGap={0.5} alignItems="center" flexGrow={1} justifyContent="flex-end">
+            {r.isOrche ? tagBox(`es-korc-${el}`, ROLE_NAME.orche) : null}
             {state}
             {idle}
             {v.heir === r.id ? tagBox(`es-kheir-${el}`, L('다음 차수', 'Next round')) : null}
             {notOpened ? tagBox(`es-kat-${el}`, how) : null}
-            {/* 노트: panel.md#kidRow — 0.1.32 J2 안 A: 회색 단추는 그 줄의 주 동작 하나(끝난 듯 → 끝내기 · 끝남 → 보관 · 그 밖 → 가기), 나머지는 글 단추 */}
+            {/* 노트: panel.md#kidRow — 0.1.32 J2 안 A 의 줄 주 동작(끝난 듯 → 끝내기 · 끝남 → 보관)은 그대로. 0.1.35 M2 ④: 「그 밖 → 가기」는 ⋯ 안 「이동」 줄로 옮김 */}
             {isEnding ? <Button key={`es-kend-${el}`} variant="secondary" label={L('끝내기', 'End')} onPress={() => acts.finish(r.id, true)} /> : null}
             {r.isEnded && canFix ? <Button key={`es-end-arch-${el}`} variant="secondary" label={L('보관', 'Archive')} onPress={() => void acts.archive(r.id, true)} /> : null}
-            {isEnding || (r.isEnded && canFix) ? <Button key={`es-m-go-${el}`} plain label={L('가기', 'Go')} onPress={() => acts.go(r.id)} /> : <Button key={`es-m-go-${el}`} variant="secondary" label={L('가기', 'Go')} onPress={() => acts.go(r.id)} />}
-            {hasMore ? more : null}
+            {more}
           </Box>
         </Box>
         {/* 노트: panel.md#kidRow — 0.1.31 ⑦ 아랫줄 맨 앞 권한 모드 낱말(앱 메뉴 이름) · 마지막 활동 */}
@@ -1237,7 +1252,8 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
               </Box>
             ) : null}
             {/* 노트: panel.md#kidRow — 0.1.32 J2 안 A: 받은 글 수는 글 단추 — 누르면 줄을 펴 글마다 수락 · 거절 · [전체 수락](0.1.31 「수락 N」 회색 단추를 갈음) */}
-            {mine.length > 0 ? <Button key={`es-take-${el}`} plain label={L(`받은 글 ${mine.length} ${isOpen ? CHEVRON.open : CHEVRON.closed}`, `${mine.length} received ${isOpen ? CHEVRON.open : CHEVRON.closed}`)} onPress={() => acts.more(r.id)} /> : null}
+            {/* 0.1.35 M2 ⑤: 「받은 글 N」 → 「모인 보고 N」(칸 아랫줄 · 맨 위 띠와 같은 이름 — 「받은」은 누적 수와 겹쳤다) */}
+            {mine.length > 0 ? <Button key={`es-take-${el}`} plain label={L(`모인 보고 ${mine.length} ${isOpen ? CHEVRON.open : CHEVRON.closed}`, `${mine.length} held ${isOpen ? CHEVRON.open : CHEVRON.closed}`)} onPress={() => acts.more(r.id)} /> : null}
           </Box>
         ) : null}
         {needsLine(r)}
@@ -1255,7 +1271,7 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
             </Text>
           </Box>
         ) : null}
-        {isOpen && canFix ? kidFix(r) : null}
+        {isOpen ? kidFix(r) : null}
         {isOpen && mine.length > 0 ? heldList(el, mine) : null}
         {isOpen && sentTo.length > 0 ? (
           <Box key={`es-kid-sent-${el}`} flexDirection="column" marginLeft={2.5} marginTop={0.3} minWidth={0}>
@@ -1369,7 +1385,7 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
   // 줄마다 되풀이되는 [가기]는 흰 글 단추(plain — 덮개 꼴은 줄마다 약 300 자라 최악 경우가 그리기 선을 넘었다)
   const linkButton = (key: string, label: string, onPress: () => unknown) => pressBox(ui, key, { content: [<Text color="suggestion">{label}</Text>], cover: coverCells(textCh(label) + 1), onPress, box: { paddingX: 1 } })
 
-  const FIX_LABEL_W = Math.ceil(Math.max(textCh(L('메시지', 'Messages')), textCh(L('마무리', 'Wrap up')))) + 1
+  const FIX_LABEL_W = Math.ceil(Math.max(textCh(L('메시지', 'Messages')), textCh(L('마무리', 'Wrap up')), textCh(L('이동', 'Go to')))) + 1
 
   // 목록 상한 — 넘으면 「나머지 N」(펼쳐도 남아 다시 접는다). 그리기 크기 대책(register.md#sizeGuard). key = 접힘 열쇠(sibs · kids)
   const capped = (list: readonly FamilyRow[], key: string, draw: (r: FamilyRow) => unknown): unknown[] => {
@@ -1580,7 +1596,7 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
 
   const heldList = (el: string, list: readonly HeldReport[]) => {
     const cost = v.accept ? acceptCost(v.accept.tokens, v.accept.isCold) : null
-    const shown = list.slice(0, MSG_LIMIT)
+    const shown = list.slice(0, KID_MSG_LIMIT)
     return (
       <Box key={`es-mc-${el}`} flexDirection="column" marginLeft={2.5} marginTop={0.2} minWidth={0}>
         {shown.map(heldItem)}
@@ -1594,8 +1610,8 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
           {list.length > 1 ? <Button key={`es-kacc-all-${el}`} variant="secondary" label={L('전체 수락', 'Accept all')} onPress={() => acts.accept(list.map(heldKey))} /> : null}
           {list.length > 1 ? <Button key={`es-rej-all-${el}`} plain dimColor label={L('전체 거절', 'Reject all')} onPress={() => acts.reject(list.map(heldKey))} /> : null}
         </Box>
-        {list.length > MSG_LIMIT ? (
-          <Text key={`es-mc-rest-${el}`} color="subtle" size="footnote">{L(`그 밖 ${list.length - MSG_LIMIT}개(오래된 것) — 위를 처리하면 이어서 보입니다`, `${list.length - MSG_LIMIT} more (older) — they show once you handle the ones above`)}</Text>
+        {list.length > KID_MSG_LIMIT ? (
+          <Text key={`es-mc-rest-${el}`} color="subtle" size="footnote">{L(`그 밖 ${list.length - KID_MSG_LIMIT}개(오래된 것) — 위를 처리하면 이어서 보입니다`, `${list.length - KID_MSG_LIMIT} more (older) — they show once you handle the ones above`)}</Text>
         ) : null}
       </Box>
     )
@@ -2365,7 +2381,7 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
     const out: unknown[][] = []
     // 그 줄이 「나머지」에 접혀 안 그려지면 칸 맨 위(0.1.31 자리)
     const pre = pu.pre
-    const drawnKids = kids.length <= LIST_LIMIT || folds.has('kids') ? kids : kids.slice(0, LIST_LIMIT)
+    const drawnKids = kidDrawn
     const preAtTidy = pre?.act === 'tidy' && canFix && ended.length > 0
     const preAtRow = pre !== null && pre !== undefined && pre.act !== 'tidy' && drawnKids.some(r => r.id === pre.ids[0])
     if (pre && !preAtTidy && !preAtRow) out.push([preCard(pre)])
@@ -2385,11 +2401,33 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
         ),
       )
     if (pu.kidsAsk && pu.kidsAsk.length > 0) out.push([kidsAskCard(pu.kidsAsk)])
+    if (kidHidden.size > 0) {
+      const pick = (key: string, on: boolean, label: string, all: boolean) =>
+        on ? <Button key={key} variant="secondary" label={label} onPress={() => acts.fold(KIDS_ALL_FOLD, all)} /> : <Button key={key} plain label={label} onPress={() => acts.fold(KIDS_ALL_FOLD, all)} />
+      out.push(
+        cardRow('es-rep-view', L('보기', 'Show'), [
+          pick('es-kv-todo', !isKidsAll, L(`완료 말고 ${kids.length - kidHidden.size}`, `Not done ${kids.length - kidHidden.size}`), false),
+          pick('es-kv-all', isKidsAll, L(`전체보기 ${kids.length}`, `All ${kids.length}`), true),
+        ]),
+      )
+    }
+    // 보낸 세션 둘부터 · 거절은 그 자리에서 한 번 묻기) + 수락 어림 한 줄
+    const every = heldAll('es-rep-held', heldKid)
+    if (every.length > 0) {
+      const cost = v.accept ? acceptCost(v.accept.tokens, v.accept.isCold) : null
+      out.push(...every)
+      if (cost)
+        out.push([
+          <Box key="es-rep-held-cost" justifyContent="flex-end" minWidth={0}>
+            <Text color="subtle" size="footnote">{L(`수락하면 ${cost}`, `Accept: ${cost}`)}</Text>
+          </Box>,
+        ])
+    }
     if (kids.length === 0) out.push(cardRow('es-rep-none', null, subText(L('하위 세션이 없습니다.', 'No sessions below.'))))
     else {
       out.push([
         <Box key="es-kids" flexDirection="column" minWidth={0}>
-          {capped(kids, 'kids', kidRow)}
+          {kidsShown.length > 0 ? [...kidDrawn.map(kidRow), kidMore > 0 ? tailRow('kids', 'kids', L('나머지', 'More'), kidMore) : null] : subText(L(`할 것 있는 하위가 없습니다 — 완료 ${kidHidden.size}개는 [전체보기]`, `Nothing to handle below — ${kidHidden.size} done in [All]`))}
         </Box>,
       ])
       out.push(cardRow('es-rep-recv', L('받는 법', 'Receive'), <Text>{v.settings.reports.value === 'app' ? L('앱 그대로', "The app's way") : L('모아 둠', 'Held in the panel')}</Text>, recvHelp))
@@ -2708,7 +2746,12 @@ export function drawPanel(ui: Ui, v: PanelView, pu: PanelUi, cols: number, acts:
         g: 'mgmt',
         name: L('하위 세션', 'Below'),
         icon: icon('clipboard'),
-        sub: kids.length > 0 ? L(`${kids.length}개 · 받은 ${countOf(v.recv, id => kidIds.has(id))}`, `${kids.length} · in ${countOf(v.recv, id => kidIds.has(id))}`) : L('없음', 'None'),
+        // 그것만(380 폭 칸에서 「모인 보고 38 · 세션 16」은 잘렸다 — 세션 수는 칸 안 「전체보기 N」), 없으면 「세션 N」. 「받은」 누적(앱 도착 기록)은 뺐다 — 줄의 안 받은 보고와 낱말이 겹쳤다
+        sub:
+          kids.length > 0
+            ? [waits.length > 0 ? L(`입력 필요 ${waits.length}`, `${waits.length} need input`) : '', heldKid.length > 0 ? L(`모인 보고 ${heldKid.length}`, `${heldKid.length} held`) : ''].filter(Boolean).join(' · ') ||
+              L(`세션 ${kids.length}`, plural(kids.length, 'session'))
+            : L('없음', 'None'),
         use: kids.length > 0,
         cnt: waits.length + heldKid.length,
         body: repBody,
